@@ -226,9 +226,11 @@ def main() -> None:
     try:
         while not _shutdown.is_set():
 
-            # Drain latest raw frame for VLM (non-blocking — drop all but newest)
+            # Drain latest raw frame for VLM + dashboard video feed (non-blocking)
             try:
                 latest_frame_bgr = frame_queue.get_nowait()
+                from api.video import set_frame as _set_video_frame
+                _set_video_frame(latest_frame_bgr)
             except queue.Empty:
                 pass
 

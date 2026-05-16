@@ -151,3 +151,24 @@ class CompanionMessage:
     message: str               # e.g. "Hey, you seem a bit tired — want to tell me about your day?"
     trigger_reason: str        # "fatigue_building" | "long_silence" | "pre_intervention"
     severity_context: str      # severity level that triggered this companion turn
+
+
+@dataclass
+class AuditEntry:
+    """Unified audit record produced by core/audit.py.
+
+    Feeds the Policy Monitor panel in the frontend. source="nemoclaw" is the
+    exclusive marker for NemoClaw policy-level entries — the frontend filter and
+    colour scheme key off this single field.
+
+    Owner: Kevin (core/audit.py produces); Josh (frontend/api consumes)
+    """
+    entry_id: str       # uuid4
+    timestamp: float    # unix epoch
+    source: str         # "perception" | "safety" | "companion" | "nemoclaw"
+    action_type: str    # "tool_call" | "api_call" | "decision" | "policy_event"
+    description: str    # human-readable, e.g. "trigger_alert(severity=high)"
+    verdict: str        # "allowed" | "blocked" | "info"
+    metadata: dict      # open bag: tool args, token counts, model ID, etc.
+    driver_id: str = ""  # empty for nemoclaw entries
+    shift_id: str = ""   # empty for nemoclaw entries
