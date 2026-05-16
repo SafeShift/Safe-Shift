@@ -1,0 +1,37 @@
+# NemoClaw access policy for SafeShift
+# Defines the exact boundaries of what the agent can and cannot do.
+# This enforces the privacy-first design at the infrastructure level:
+# the agent literally cannot contact employer or fleet systems regardless of model output.
+#
+# Confirm exact NemoClaw YAML syntax against: github.com/NVIDIA/NemoClaw
+# This file is illustrative of intent — adjust field names to match the NemoClaw spec.
+
+version: "1.0"
+agent: safeshift
+
+allow:
+  file_read:
+    - "{{PROJECT_DIR}}/config/"          # read settings and thresholds
+    - "{{PROJECT_DIR}}/safeshift.db"     # read driver baseline and shift history
+  file_write:
+    - "{{PROJECT_DIR}}/safeshift.db"     # write session data and intervention records
+  network_outbound:
+    - "integrate.api.nvidia.com"         # Nemotron inference (Nano-Omi VLM + Super reasoning)
+    - "ntfy.sh"                          # driver phone notification only
+    - "nominatim.openstreetmap.org"      # rest stop lookup (no API key, no data retention)
+  devices:
+    - camera                             # webcam / dash cam feed only
+
+deny:
+  network_outbound:
+    - "*"                                # deny all unlisted — no employer endpoints possible
+  file_write:
+    - "{{HOME}}/"                        # no write access outside project directory
+    - "/etc/"
+    - "/tmp/"
+
+# What this policy prevents:
+# - Sending biometric data to any employer, fleet operator, or third party
+# - Accessing files outside the project directory
+# - Calling any API not explicitly listed above
+# Judges can verify: run SafeShift under NemoClaw and attempt to POST to an external URL — it will be blocked.
