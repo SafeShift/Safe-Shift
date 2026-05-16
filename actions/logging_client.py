@@ -17,4 +17,26 @@ def log_cycle(frame, decision, companion_message=None) -> None:
         decision: InterventionDecision from agents/safety.py
         companion_message: CompanionMessage if companion fired this cycle, else None
     """
-    raise NotImplementedError
+    import json
+    import os
+    from datetime import datetime
+
+    log_path = os.getenv("LOG_FILE_PATH", "./safeshift_session.log")
+
+    entry = {
+        "ts": datetime.utcnow().isoformat(),
+        "driver_id": frame.driver_id,
+        "eye_openness": frame.eye_openness,
+        "blink_rate": frame.blink_rate,
+        "yawn_detected": frame.yawn_detected,
+        "gaze": frame.gaze_direction,
+        "severity": decision.severity,
+        "should_intervene": decision.should_intervene,
+        "intervention_type": decision.intervention_type,
+        "trigger_companion": decision.trigger_companion,
+        "reason": decision.reason,
+        "companion": companion_message.message if companion_message else None,
+    }
+
+    with open(log_path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
