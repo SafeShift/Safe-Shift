@@ -23,3 +23,7 @@ severity_escalation_minutes: 5 # if same severity recurs within this window, esc
 
 vision:
   flmk_model_path: "vision/models/face_landmarker.task"
+  media_source: "camera"          # "camera" | "image"
+  camera_index: 0                 # webcam device index; used when media_source=camera
+  image_dir: ""                   # path to image folder; used when media_source=image
+  target_fps: 15

@@ -18,7 +18,7 @@ def _to_namespace(d):
 def load_config(path=None):
     if path is None:
         path = Path(__file__).parent / "defaults.yaml"
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     data["api"] = {
@@ -34,6 +34,13 @@ def load_config(path=None):
         "camera_index": int(os.getenv("CAMERA_INDEX", "0")),
         "demo_lat": float(os.getenv("DEMO_LAT", "36.9916")),
         "demo_lon": float(os.getenv("DEMO_LON", "-122.0583")),
+    }
+    data["vision"] = {
+        "flmk_model_path": data.get("vision", {}).get("flmk_model_path", "vision/models/face_landmarker.task"),
+        "media_source": os.getenv("MEDIA_SOURCE", "camera"),
+        "camera_index": int(os.getenv("CAMERA_INDEX", "0")),
+        "image_dir": os.getenv("IMAGE_DIR", ""),
+        "target_fps": int(os.getenv("TARGET_FPS", "15")),
     }
     data["notifications"] = {
         "ntfy_topic": os.getenv("NTFY_TOPIC", "safeshift-alerts"),
