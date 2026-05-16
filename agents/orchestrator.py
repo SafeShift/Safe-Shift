@@ -8,6 +8,25 @@ from actions.logging_client import log_cycle
 
 logger = logging.getLogger(__name__)
 
+_SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _estimate_severity(frame) -> int:
+    """Rough signal-based severity estimate used only for cooldown bypass decisions.
+
+    Returns an integer matching _SEVERITY_ORDER values so we can compare against
+    the last fired severity without calling the LLM.
+    """
+    eye = frame.eye_openness
+    yawn = frame.yawn_detected
+    if eye < 0.20:
+        return 4  # critical
+    if eye < 0.30 or (eye < 0.35 and yawn):
+        return 3  # high
+    if eye < 0.40 and yawn:
+        return 2  # medium
+    return 1      # low
+
 
 def _no_intervention() -> InterventionDecision:
     return InterventionDecision(
@@ -42,17 +61,21 @@ class Orchestrator:
         # 1. assemble ShiftContext
         context = build_context(frame, shift_id, shift_start, self._store, self._config, vlm_assessment)
 
-        # 2. Safety Reasoning Agent — skip if within cooldown, unless conditions are critical
+        # 2. Safety Reasoning Agent — cooldown applies to same/lower severity only.
+        # Estimate current severity from raw signals; if it's higher than the last
+        # fired severity, bypass cooldown so the agent can escalate immediately.
         now = time.time()
         secs_since_last = now - self._last_intervention_time
-        # Override cooldown if eyes are nearly closed or eyes+yawn both dangerously low
-        conditions_critical = (
-            frame.eye_openness < 0.20
-            or (frame.eye_openness < 0.30 and frame.yawn_detected)
+        last_order = _SEVERITY_ORDER.get(self._last_intervention_severity, 0)
+        estimated_order = _estimate_severity(frame)
+        within_cooldown = (
+            secs_since_last < self._cooldown_seconds
+            and estimated_order <= last_order
         )
-        within_cooldown = (secs_since_last < self._cooldown_seconds) and not conditions_critical
         if within_cooldown:
-            logger.debug("Cooldown active — %ds remaining", int(self._cooldown_seconds - secs_since_last))
+            logger.debug("Cooldown active — %ds remaining (last=%s, est=%s)",
+                         int(self._cooldown_seconds - secs_since_last),
+                         self._last_intervention_severity, estimated_order)
             decision = _no_intervention()
         else:
             decision = self._safety.run(context)
