@@ -26,7 +26,7 @@ class Orchestrator:
 
     def run_cycle(self, frame, shift_id: str, shift_start: float, vlm_assessment=None) -> None:
         # 1. assemble ShiftContext
-        context = build_context(frame, shift_id, shift_start, vlm_assessment)
+        context = build_context(frame, shift_id, shift_start, self._store, self._config, vlm_assessment)
 
         # 2. Safety Reasoning Agent — ReAct loop → InterventionDecision
         decision = self._safety.run(context)

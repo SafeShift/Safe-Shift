@@ -155,12 +155,14 @@ def _start_vision_pipeline(config, frame_queue, analysis_queue) -> threading.Thr
     analysis_queue receives FrameAnalysis objects every analysis_window_sec.
     """
     pipeline = VisionPipeline(config)
-    t = threading.Thread(
-        target=pipeline.run,
-        args=(frame_queue, analysis_queue),
-        name="vision-pipeline",
-        daemon=True,
-    )
+
+    def _run_with_logging():
+        try:
+            pipeline.run(frame_queue, analysis_queue)
+        except Exception as exc:
+            logger.error("Vision pipeline thread crashed: %s", exc, exc_info=True)
+
+    t = threading.Thread(target=_run_with_logging, name="vision-pipeline", daemon=True)
     t.start()
     logger.info("Vision pipeline thread started")
     return t
@@ -187,13 +189,24 @@ def _fire_vlm_async(frame_bgr, driver_id: str, timestamp: float,
 def main() -> None:
     config    = load_config()
     driver_id = config.driver.driver_id
+    logger.info("config OK  driver=%s  db=%s  camera=%s",
+                driver_id, config.driver.db_path, config.vision.camera_index)
 
     # ── Construct all agents/services with injected config ────────────────────
-    store        = MemoryStore(config)
-    client       = NemotronClient(config)
-    safety       = SafetyAgent(config, client)
-    companion    = CompanionAgent(config, client)
+    store = MemoryStore(config)
+    logger.info("MemoryStore OK  db=%s", store._db_path)
+
+    client = NemotronClient(config)
+    logger.info("NemotronClient OK  base_url=%s", config.api.nemotron_base_url)
+
+    safety = SafetyAgent(config, client)
+    logger.info("SafetyAgent OK  model=%s", safety._model)
+
+    companion = CompanionAgent(config, client)
+    logger.info("CompanionAgent OK")
+
     orchestrator = Orchestrator(config, safety, companion, store)
+    logger.info("Orchestrator OK")
 
     # KEVIN — core/audit.py: starts background JSONL writer + NemoClaw tail thread
     start_audit_recorder()
@@ -218,6 +231,28 @@ def main() -> None:
     signal.signal(signal.SIGINT,  _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
+    # ── Independent heartbeat thread ─────────────────────────────────────────
+    # Uses print(flush=True) — bypasses any logging buffering on Windows threads.
+    def _heartbeat_loop():
+        import sys
+        try:
+            n = 0
+            while not _shutdown.is_set():
+                n += 1
+                names = [t.name for t in threading.enumerate()]
+                vision = "alive" if "vision-pipeline" in names else "DEAD"
+                print(
+                    f"[hb#{n}] vision={vision} frame_q={frame_queue.qsize()} "
+                    f"analysis_q={analysis_queue.qsize()} threads={names}",
+                    flush=True, file=sys.stderr,
+                )
+                time.sleep(2)
+        except Exception as exc:
+            print(f"[HEARTBEAT CRASHED] {exc}", flush=True, file=sys.stderr)
+
+    threading.Thread(target=_heartbeat_loop, name="heartbeat", daemon=True).start()
+    print("[main] heartbeat thread launched", flush=True)
+
     # ── Main loop ─────────────────────────────────────────────────────────────
     # Each iteration:
     #   1. Drain latest raw frame (non-blocking) for VLM
@@ -230,8 +265,10 @@ def main() -> None:
     vlm_thread: threading.Thread = None
     last_vlm_time = 0.0
     latest_frame_bgr = None
+    cycle_count = 0
 
     logger.info("SafeShift running. Ctrl-C to stop.")
+    print("[main] entering main loop", flush=True)
 
     try:
         while not _shutdown.is_set():
@@ -239,6 +276,7 @@ def main() -> None:
             # Drain latest raw frame for VLM (non-blocking — drop all but newest)
             try:
                 latest_frame_bgr = frame_queue.get_nowait()
+                print("got frame from frame_queue")
             except queue.Empty:
                 pass
 
@@ -247,6 +285,11 @@ def main() -> None:
                 frame_analysis = analysis_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
+
+            cycle_count += 1
+            logger.info("cycle %d — FrameAnalysis received  eye=%.3f blinks=%.1f yawn=%s gaze=%s",
+                        cycle_count, frame_analysis.eye_openness, frame_analysis.blink_rate,
+                        frame_analysis.yawn_detected, frame_analysis.gaze_direction)
 
             now = time.time()
 
@@ -272,12 +315,14 @@ def main() -> None:
             # → publish SSE events to frontend.
             # vlm_assessment is None until the first VLM cycle completes (~10 s in).
             try:
+                logger.info("cycle %d — calling orchestrator.run_cycle", cycle_count)
                 orchestrator.run_cycle(
                     frame=frame_analysis,
                     shift_id=shift_id,
                     shift_start=shift_start,
                     vlm_assessment=latest_vlm[0],
                 )
+                logger.info("cycle %d — run_cycle done", cycle_count)
             except Exception as exc:
                 logger.error("orchestrator.run_cycle error: %s", exc, exc_info=True)
 
