@@ -14,12 +14,24 @@ Shift lifecycle:
 Owner: Kevin
 """
 
+import base64
+import dataclasses
 import logging
+import os
 import queue
 import signal
 import threading
 import time
 import uuid
+
+# ── Cloud split-mode config ───────────────────────────────────────────────────
+# BREV_URL set  → this machine has the camera; POST vision results to Brev server
+# VISION_MODE=remote → this machine IS the Brev server; skip camera, drain /ingest queue
+# Neither       → standalone (camera + agents on same machine)
+BREV_URL     = os.getenv("BREV_URL", "").rstrip("/")   # e.g. https://abc123.brev.dev
+VISION_MODE  = os.getenv("VISION_MODE", "local")        # "local" | "remote"
+_IS_SENDER   = bool(BREV_URL)
+_IS_RECEIVER = VISION_MODE == "remote"
 
 from config.settings import load_config
 from memory.store import MemoryStore
@@ -176,6 +188,20 @@ def _start_vision_pipeline(config, output_queue, frame_callback=None) -> threadi
     return t
 
 
+def _post_to_brev(frame_bgr, analysis) -> None:
+    """POST a (frame, FrameAnalysis) pair to the Brev server. Fire-and-forget."""
+    import requests, cv2
+    try:
+        _, buf = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        payload = {
+            "analysis": dataclasses.asdict(analysis),
+            "frame_jpeg_b64": base64.b64encode(buf.tobytes()).decode(),
+        }
+        requests.post(f"{BREV_URL}/ingest", json=payload, timeout=1.5)
+    except Exception as exc:
+        logger.warning("Brev POST failed: %s", exc)
+
+
 def _fire_vlm_async(frame_bgr, driver_id: str, timestamp: float,
                     shift_id: str, result_holder: list) -> None:
     """Run assess_frame() in a thread; store result in result_holder[0].
@@ -231,16 +257,27 @@ def main() -> None:
     # JOSH — api/server.py: FastAPI server for frontend SSE stream
     _start_api_server(config)
 
-    # Resolve frame_callback for full-fps MJPEG feed
+    # Resolve frame_callback for full-fps MJPEG feed (local/standalone only)
     try:
         from api.video import set_frame as _frame_callback
     except ImportError:
         _frame_callback = None
 
-    # CALEB — vision/pipeline.py: runs in its own thread
-    # output_queue receives (frame_bgr, FrameAnalysis) pairs on every captured frame
-    output_queue = queue.Queue(maxsize=30)
-    _start_vision_pipeline(config, output_queue, frame_callback=_frame_callback)
+    if _IS_RECEIVER:
+        # Brev server: skip camera, drain the /ingest queue from the local vision node
+        from api.server import get_ingest_queue
+        output_queue = get_ingest_queue()
+        logger.info("Cloud mode: RECEIVER — draining /ingest queue (no local camera)")
+    elif _IS_SENDER:
+        # Local machine: run camera, POST to Brev, no local orchestrator/dashboard
+        output_queue = queue.Queue(maxsize=30)
+        _start_vision_pipeline(config, output_queue, frame_callback=None)
+        logger.info("Cloud mode: SENDER — POSTing vision output to %s", BREV_URL)
+    else:
+        # Standalone: camera + agents on same machine
+        output_queue = queue.Queue(maxsize=30)
+        _start_vision_pipeline(config, output_queue, frame_callback=_frame_callback)
+        logger.info("Standalone mode")
 
     _shutdown = threading.Event()
 
@@ -316,6 +353,15 @@ def main() -> None:
 
             cycle_count += 1
             now = time.time()
+
+            # ── Sender mode: just POST to Brev and continue ──────────────────
+            if _IS_SENDER:
+                threading.Thread(
+                    target=_post_to_brev,
+                    args=(frame_bgr, frame_analysis),
+                    daemon=True,
+                ).start()
+                continue
 
             # ── Always: publish live metrics to dashboard (Panel 1) ──────────
             if _publish_event is not None:

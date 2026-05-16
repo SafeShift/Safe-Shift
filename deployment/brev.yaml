@@ -7,4 +7,4 @@ instance_type: nvidia-a10g
 
 startup_cmd: |
   bash deployment/setup_brev.sh
-  python -m agent.orchestrator
+  VISION_MODE=remote python main.py
