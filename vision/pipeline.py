@@ -1,57 +1,114 @@
-"""End-to-end vision pipeline: orchestrates capture → preprocess → landmarks → features → FrameAnalysis output."""
+"""End-to-end vision pipeline: capture → landmarks → features → FrameAnalysis.
+
+VisionPipeline.run() is a blocking loop intended to run in its own thread/process.
+It writes to two queues consumed by the orchestrator:
+  - frame_queue    : raw BGR frames for visualization / VLM sampling
+  - analysis_queue : FrameAnalysis objects (one per analysis_window_sec)
+
+Config expected (config.vision namespace):
+  media_source, camera_index, image_dir, target_fps,
+  flmk_model_path
+
+Config expected (config.driver namespace):
+  driver_id
+
+Config expected (config root):
+  analysis_window_sec
+"""
 
 import queue
 import time
+import logging
+
+import cv2
+from mediapipe import Image, ImageFormat
 
 from vision.capture import MediaCapture
 from vision.landmarks import FaceLandmarkExtractor
+from vision.features import FaceFeatureExtractor, FeatureAggregator
+from vision.preprocess import preprocess
 
-class FrameAnalysis:
-    def __init__(self, timestamp, driver_id, features):
-        self.timestamp = timestamp
-        self.driver_id = driver_id
-        self.features = features
+logger = logging.getLogger(__name__)
+
 
 class VisionPipeline:
-    def __init__(self, config):
-        # vision related configs
-        self.config = config
+    """Orchestrates the full vision stack for one driver session.
 
-        # initialize capture module or RTSP stream
+    Args:
+        config: SimpleNamespace from config.settings.load_config().
+                Reads config.vision.* and config.driver.driver_id.
+    """
+
+    def __init__(self, config):
+        self.config = config
+        v = config.vision
+
+        self.driver_id = config.driver.driver_id
+        self.window_sec = getattr(config, "analysis_window_sec", 2)
+
         self.capture = MediaCapture(
-            media_source=config.media_source,
-            camera_index=config.camera_index,
-            image_dir=config.image_dir,
-            target_fps=config.target_fps
+            media_source=v.media_source,
+            camera_index=v.camera_index,
+            image_dir=v.image_dir,
+            target_fps=v.target_fps,
         )
 
-        # initialize landmark extractor
-        self.flmk_extractor = FaceLandmarkExtractor(config.landmark_model)
-        self.flmk_featurizer = FaceFeatureExtractor(config.feature_model)
+        self.landmark_extractor = FaceLandmarkExtractor(model_path=v.flmk_model_path)
+        t = config.thresholds
+        self.feature_extractor  = FaceFeatureExtractor(
+            ear_blink_threshold  =getattr(t, "ear_blink_threshold",   0.20),
+            mar_yawn_threshold   =getattr(t, "mar_yawn_threshold",    0.55),
+            gaze_offset_threshold=getattr(t, "gaze_offset_threshold", 0.15),
+            yawn_open_sec        =getattr(t, "yawn_open_sec",         2.0),
+        )
+        self.aggregator         = FeatureAggregator(
+            window_sec=self.window_sec,
+            fps=v.target_fps,
+        )
 
-    def run(self, frame_queue, analysis_queue):
-        # main loop to process frames
+        self._last_flush = time.time()
+        logger.info("VisionPipeline initialised (driver=%s, window=%ss)", self.driver_id, self.window_sec)
+
+    def run(self, frame_queue: queue.Queue, analysis_queue: queue.Queue):
+        """Main processing loop. Blocks until the capture source is exhausted or the process is killed.
+
+        Args:
+            frame_queue:    queue.Queue for raw BGR frames (maxsize recommended: 5).
+            analysis_queue: queue.Queue for FrameAnalysis objects.
+        """
         for frame in self.capture:
-            timestamp_ms = int(time.time() * 1000)  # monotonically increasing timestamp in ms
+            timestamp_ms = int(time.time() * 1000)
+            now = time.time()
 
-            # preprocess frame (resize, normalize, etc.)
-            preprocessed = self.preprocess(frame)
+            # ── Landmark extraction ──────────────────────────────────────────
+            preprocessed = preprocess(frame)
+            result   = self.landmark_extractor(preprocessed, timestamp_ms)
 
-            # extract landmarks (pose, face, hands)
-            landmark_result = self.flmk_extractor(preprocessed, timestamp_ms)
-            if landmark_result.face_landmarks:
-                # compute features from landmarks
-                features = self.flmk_featurizer(landmark_result.face_landmarks[0])
+            # ── Feature extraction (only when a face is detected) ────────────
+            if result.face_landmarks:
+                features = self.feature_extractor(result.face_landmarks[0])
+                self.aggregator.update(features, timestamp=now)
+            else:
+                logger.debug("No face detected at t=%.3f", now)
 
-            # output FrameAnalysis results
-            frame_analysis = FrameAnalysis( 
-                timestamp=time.time(),
-                driver_id=self.config.driver_id,
-                features=features
-            )
+            # ── Push mirmrored raw frame for visualization / VLM sampling ──────────────
             try:
-                frame_queue.put_nowait(frame)  # for visualization or debugging
-                analysis_queue.put(frame_analysis)
+                frame_queue.put_nowait(cv2.flip(frame, 1))  # mirror for display
             except queue.Full:
-                pass
-            
+                pass  # drop oldest isn't worth the lock; consumer lags behind
+
+            # ── Flush aggregated FrameAnalysis every window_sec ─────────────
+            if now - self._last_flush >= self.window_sec:
+                analysis = self.aggregator.flush(timestamp=now, driver_id=self.driver_id)
+                try:
+                    analysis_queue.put(analysis, timeout=0.5)
+                except queue.Full:
+                    logger.warning("analysis_queue full — dropping FrameAnalysis at t=%.3f", now)
+                self._last_flush = now
+                logger.debug(
+                    "FrameAnalysis flushed: EAR=%.3f blinks/min=%.1f yawn=%s gaze=%s",
+                    analysis.eye_openness,
+                    analysis.blink_rate,
+                    analysis.yawn_detected,
+                    analysis.gaze_direction,
+                )
