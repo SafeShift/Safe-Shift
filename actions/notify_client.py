@@ -20,4 +20,17 @@ def send_push(title: str, message: str, priority: str = "high") -> bool:
     Returns:
         True if the ntfy server accepted the request
     """
-    raise NotImplementedError
+    import requests
+    from config.settings import config
+
+    url = f"{config.notifications.ntfy_server}/{config.notifications.ntfy_topic}"
+    try:
+        resp = requests.post(
+            url,
+            data=message.encode(),
+            headers={"Title": title, "Priority": priority},
+            timeout=5,
+        )
+        return resp.status_code == 200
+    except requests.RequestException:
+        return False
