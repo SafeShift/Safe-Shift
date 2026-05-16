@@ -1,0 +1,133 @@
+/* SafeShift Demo Dashboard — styles
+   Owner: Josh */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, sans-serif;
+  background: #0a0a0f;
+  color: #e0e0e0;
+  min-height: 100vh;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  background: #111118;
+  border-bottom: 1px solid #222;
+}
+
+header h1 {
+  font-size: 1.4rem;
+  color: #76b900; /* NVIDIA green */
+  letter-spacing: 0.05em;
+}
+
+#shift-status {
+  font-size: 0.85rem;
+  color: #76b900;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 1rem;
+  padding: 1rem 2rem;
+}
+
+section {
+  background: #111118;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+section h2 {
+  font-size: 0.9rem;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
+}
+
+.model-tag {
+  background: #76b900;
+  color: #000;
+  font-size: 0.65rem;
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  margin-left: 0.5rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+/* Severity badge */
+#severity-badge {
+  display: inline-block;
+  padding: 0.3em 0.8em;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 1.1rem;
+  text-transform: uppercase;
+}
+#severity-badge[data-severity="none"]     { background: #1a2a1a; color: #76b900; }
+#severity-badge[data-severity="low"]      { background: #2a2a00; color: #e0d000; }
+#severity-badge[data-severity="medium"]   { background: #2a1a00; color: #e08000; }
+#severity-badge[data-severity="high"]     { background: #2a0000; color: #e04040; }
+#severity-badge[data-severity="critical"] { background: #e04040; color: #fff; }
+
+/* Metrics */
+.metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #1a1a1a;
+}
+.metric label { color: #666; font-size: 0.85rem; }
+.metric span  { font-size: 1rem; font-weight: 600; }
+
+/* Companion chat bubbles */
+#companion-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.companion-bubble {
+  background: #1a1a2e;
+  border-left: 3px solid #76b900;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.9rem;
+}
+
+/* ReAct trace */
+#react-trace {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #76b900;
+  max-height: 150px;
+  overflow-y: auto;
+  background: #050508;
+  padding: 0.5rem;
+  border-radius: 4px;
+}
+
+/* Intervention log */
+#log-list {
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+#log-list li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #1a1a1a;
+  font-size: 0.82rem;
+  color: #bbb;
+}

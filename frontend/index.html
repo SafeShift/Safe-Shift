@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeShift — Driver Safety Monitor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!--
+    SafeShift Demo Dashboard
+    Owner: Josh
+
+    Panels:
+    1. Driver Status        — live fatigue score gauge + severity badge
+    2. Perception Agent     — latest VLM scene description (Nemotron-nano-omi output)
+    3. Safety Agent         — current ReAct reasoning step + InterventionDecision
+    4. Companion Agent      — last CompanionMessage displayed like a chat bubble
+    5. Intervention Log     — scrolling list of InterventionRecords this shift
+    6. Metrics              — eye openness, blink rate, gaze direction (live sparklines)
+
+    All data arrives via SSE from GET /stream (api/server.py).
+    See frontend/app.js for event handling.
+  -->
+
+  <header>
+    <h1>SafeShift</h1>
+    <span id="shift-status">Shift active</span>
+  </header>
+
+  <main>
+    <!-- Panel 1: Driver Status -->
+    <section id="driver-status">
+      <h2>Driver Status</h2>
+      <div id="fatigue-gauge"><!-- rendered by app.js --></div>
+      <span id="severity-badge">--</span>
+    </section>
+
+    <!-- Panel 2: Perception Agent -->
+    <section id="perception-panel">
+      <h2>Perception Agent <span class="model-tag">Nemotron-nano-omi</span></h2>
+      <p id="vlm-description">Waiting for first VLM frame...</p>
+      <div id="vlm-flags"></div>
+      <div id="vlm-confidence"></div>
+    </section>
+
+    <!-- Panel 3: Safety Reasoning Agent -->
+    <section id="safety-panel">
+      <h2>Safety Reasoning Agent <span class="model-tag">Nemotron-Super</span></h2>
+      <div id="react-trace"><!-- ReAct steps stream here --></div>
+      <div id="intervention-decision"></div>
+    </section>
+
+    <!-- Panel 4: Companion Agent -->
+    <section id="companion-panel">
+      <h2>Companion Agent <span class="model-tag">Nemotron-Super</span></h2>
+      <div id="companion-messages"><!-- chat bubbles --></div>
+    </section>
+
+    <!-- Panel 5: Intervention Log -->
+    <section id="intervention-log">
+      <h2>Intervention Log</h2>
+      <ul id="log-list"></ul>
+    </section>
+
+    <!-- Panel 6: Live Metrics -->
+    <section id="metrics-panel">
+      <h2>Live Metrics</h2>
+      <div class="metric">
+        <label>Eye Openness</label>
+        <span id="metric-eye-openness">--</span>
+      </div>
+      <div class="metric">
+        <label>Blink Rate</label>
+        <span id="metric-blink-rate">--</span>
+      </div>
+      <div class="metric">
+        <label>Gaze</label>
+        <span id="metric-gaze">--</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

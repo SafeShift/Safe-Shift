@@ -1,6 +1,6 @@
 # SafeShift — Architecture Reference
 
-> Read this before touching any code. It is the shared contract that lets three people
+> Read this before touching any code. It is the shared contract that lets four people
 > build in parallel without merge conflicts.
 
 ---
@@ -31,7 +31,24 @@ with the Nemotron VLM subagent, (2) reasons over shift history with Nemotron-Sup
 ReAct loop, (3) triggers the companion agent to start a conversation, (4) calls the
 rest-stop finder tool and pushes a location-aware notification to a phone via ntfy, and
 (5) updates the local driver baseline — all as one observable end-to-end loop under
-NemoClaw policy control.
+NemoClaw policy control, visible in real time on the demo dashboard.
+
+---
+
+## Team Ownership
+
+| Person | Agent / Area | Directories |
+|--------|-------------|-------------|
+| **Caleb** | Perception Agent | `vision/` |
+| **Kevin** | Safety Reasoning Agent + orchestration + audit recorder | `core/`, `agents/` (except companion.py), `llm/` (except companion_prompts.py), `actions/` (except rest_finder.py), `memory/`, `config/`, `main.py` |
+| **Emilio** | Companion Agent | `agents/companion.py`, `llm/companion_prompts.py`, `actions/rest_finder.py` |
+| **Josh** | Frontend + tests | `frontend/`, `api/`, `tests/`, `deployment/` |
+
+**Critical path:** Kevin finalizes `core/models.py` first. Everyone reviews. Nobody edits
+it after that without team coordination — all four owners depend on it from day one.
+
+**Conflict rule:** Kevin owns `llm/client.py` (shared LLM client). Emilio imports it but
+does not edit it. If Emilio needs a new parameter, ask Kevin to add it.
 
 ---
 
@@ -50,182 +67,154 @@ Camera / RTSP stream
  FrameAnalysis  (every 2 s)       VLMFrameAssessment  (every ~10 s)
    └──────────────┬────────────────────┘
                   ▼
- agent/context_builder.py   ← FrameAnalysis + VLMFrameAssessment + memory → ShiftContext
+ agents/context_builder.py   ← FrameAnalysis + VLMFrameAssessment + memory → ShiftContext
                   │
                   ▼
  ┌────────────────────────────────────────────────────────┐
- │          SAFETY REASONING AGENT  (Nemotron-Super)      │
- │  reasoning/nemotron.py + prompts.py                    │
- │  ReAct loop: Reason → Act → Observe                    │
- │  assess shift trend → decide intervention + companion  │
+ │          SAFETY REASONING AGENT  (agents/safety.py)    │
+ │          Nemotron-Super via OpenClaw ReAct loop         │
+ │          llm/client.py + llm/safety_prompts.py         │
+ │          Reason → Act (tools) → Observe → repeat       │
  └──────────────────────┬─────────────────────────────────┘
                         │  InterventionDecision
          ┌──────────────┴──────────────────┐
          │ trigger_companion=True          │ should_intervene=True
          ▼                                 ▼
- ┌───────────────────┐         agent/orchestrator.py
- │  COMPANION AGENT  │         dispatch via OpenClaw tools
- │  agent/companion  │    ┌────┴─────┬──────────────┐
- │  (Nemotron-Super) │    ▼          ▼               ▼
- │  → CompanionMsg   │  alert.py  rest_break.py  phone_notify.py
- └────────┬──────────┘    │       + rest_finder        │
-          │               │     (Nominatim lookup)      │
-          └──────┬─────── ┴───────────────┬─────────────┘
-                 │                        │  InterventionRecord
-                 ▼                        ▼
-          display / TTS        integrations/{alerting, notify, logging_service}
-                                          │
-                                          ▼
-                             memory/shift_history.py    ← stays on-device
-                             memory/driver_baseline.py  ← updated at end_shift
+ ┌────────────────────────┐      agents/orchestrator.py
+ │   COMPANION AGENT      │      dispatch via OpenClaw tools
+ │   agents/companion.py  │ ┌────┴──────┬──────────────┐
+ │   Nemotron-Super        │ ▼           ▼               ▼
+ │   llm/companion_prompts │ actions/  actions/        actions/
+ │   → CompanionMessage    │ alert.py  rest_break.py  phone_notify.py
+ └──────────┬─────────────┘ │          + rest_finder        │
+            │               │            (Nominatim)        │
+            └──────┬────────┴───────────────┬───────────────┘
+                   │                        │  InterventionRecord
+                   ▼                        ▼
+            display / TTS       actions/logging_client.py  (every cycle)
+                                api/events.py              (publishes to frontend)
+                                           │
+                                           ▼
+                               memory/shift_history.py    ← stays on-device
+                               memory/driver_baseline.py  ← updated at end_shift
 ```
 
 ---
 
-## Module Breakdown
+## Directory Structure
 
-### `main.py`
-Owned by Kevin. The process entry point. Reads `driver_id` from config/env, generates
-`shift_id` (uuid4) and `shift_start` timestamp, then calls `start_shift()` to initialize
-memory for the session. Starts `vision/pipeline.run_pipeline()` and feeds each
-`FrameAnalysis` into the `agent/orchestrator` loop. On exit it calls `end_shift()`,
-which triggers the `DriverBaseline` update. Nothing else should import from main.py.
-
-### `config/`
-Loads `.env` via `python-dotenv` and exposes a typed `Settings` object. Also holds
-`defaults.yaml` — the starting thresholds (e.g. eye openness below 0.25 = droopy) used
-before a driver has accumulated shift history. Anything that is "a number that might
-change" lives here, not hardcoded.
-
-### `vision/`
-Owned entirely by Caleb. Two parallel outputs per cycle:
-- `pipeline.py` — MediaPipe landmark chain (capture → preprocess → landmarks → features)
-  producing a `FrameAnalysis` every ~2 s. Fast; runs every cycle.
-- `vlm_analyzer.py` — Sends a raw frame to the **Nemotron-3-Nano-Omi VLM** and returns a
-  `VLMFrameAssessment` with a natural-language fatigue description, score, and flags.
-  Slower; runs every ~10 s to manage inference cost.
-
-Neither sub-module knows about agents, memory, or interventions. Kevin and Emilio code
-against `FrameAnalysis` and `VLMFrameAssessment` only.
-
-### `memory/`
-Owned by Emilio. Thin read/write layer over SQLite (stdlib `sqlite3`; local file only —
-no remote database, no cloud sync). Two concerns: `DriverBaseline` (persists across
-shifts, updated at shift end) and shift history (`FrameAnalysis` snapshots +
-`InterventionRecord`s for the current shift). Exposes simple `get_baseline(driver_id)`,
-`save_baseline(baseline)`, `append_frame(shift_id, frame)`, `append_intervention(record)`
-functions — no ORM. The database file path is set in `.env` (default: `./safeshift.db`)
-and stays on the driver's device.
-
-### `agent/`
-Owned by Kevin. Four files:
-
-- `subagents.py` — declares the three agent roles and their model assignments
-  (Perception: Nano-Omi, Safety Reasoning: Nemotron-Super, Companion: Nemotron-Super).
-  Model IDs come from `config/settings.py`.
-- `context_builder.py` — merges `FrameAnalysis`, the latest `VLMFrameAssessment`, and
-  memory layer data into a `ShiftContext`. Only place that touches both vision and memory.
-- `orchestrator.py` — per-cycle loop: build context → invoke Safety Reasoning Agent
-  (ReAct: Reason → Act → Observe) → receive `InterventionDecision` → if
-  `trigger_companion` dispatch Companion Agent → dispatch intervention handler via
-  OpenClaw tool → write `InterventionRecord` to memory → always log via
-  `integrations/logging_service`.
-- `tools.py` — OpenClaw tool schema declarations; each tool wraps one
-  `interventions/<type>.execute()` or `companion.generate()` call.
-- `companion.py` — Companion Agent: given `ShiftContext` and prior `CompanionMessage`s,
-  generates a proactive, non-repetitive message to keep the driver engaged.
-
-### `reasoning/`
-Owned by Kevin. `nemotron.py` wraps the NVIDIA Nemotron API (OpenAI-compatible
-endpoint). `prompts.py` renders a `ShiftContext` into the system + user prompt that asks
-Nemotron to return structured JSON. `decision.py` validates and parses that JSON into an
-`InterventionDecision`. The prompt format and JSON schema are defined here and nowhere
-else.
-
-### `interventions/`
-Owned by Emilio. **`models.py` is the critical-path file — finalize and commit it first,
-before any other module is implemented, because every other module imports from it.**
-Each handler (`alert.py`, `rest_break.py`, `phone_notify.py`) receives an
-`InterventionDecision`, calls the appropriate integration client, and returns an
-`InterventionRecord`. Handlers are deliberately thin — no business logic, just routing.
-
-Escalation model: `intervention_type` is a single action per cycle. Graduated escalation
-(alert → rest_break → phone_notify) happens across loop cycles using
-`severity_escalation_minutes` from `config/defaults.yaml`. Session logging is always-on
-(called every cycle by orchestrator.py) and is NOT an `intervention_type` value.
-
-All interventions target the driver directly. No data is sent to any fleet operator,
-employer, or external service.
-
-### `integrations/`
-Owned by Emilio. Four thin clients:
-- `alerting.py` — on-device audio/visual alert
-- `notify.py` — driver phone push via ntfy (topic + server from `config/settings.py`)
-- `rest_finder.py` — queries Nominatim/OpenStreetMap for nearby rest areas given
-  approximate location; no API key required, no personal data retained by Nominatim
-- `logging_service.py` — local-only session logger; called every cycle
-
-No fleet or employer endpoints exist in this directory.
-
-### `tests/`
-Shared. `conftest.py` provides sample instances of every dataclass so any test file can
-`from conftest import sample_frame_analysis` without re-building fixtures. Unit tests
-mock external calls (camera, Nemotron API, alert endpoint). Write tests as you go, not
-at the end.
-
-### `nemoclaw-policy.yaml`
-Root-level NemoClaw access policy. Defines exactly what the agent is and is not allowed
-to access: camera device, local SQLite, Nemotron inference endpoint, ntfy, and Nominatim.
-Denies all other outbound network and file-system access. Running SafeShift under
-NemoClaw means the agent *cannot* contact an employer endpoint even if it tried — the
-policy is enforced by the runtime, not just the code. This is both a privacy guarantee
-and a demo moment: show a judge the blocked request log.
-
-### `deployment/`
-Owned by Josh. `Dockerfile` + `docker-compose.yml` for local dev. `brev.yaml` declares
-the GPU instance config for NVIDIA Brev; `setup_brev.sh` bootstraps the environment.
+```
+Safe-Shift/
+│
+├── core/                        # Shared dataclasses + audit recorder — EVERYONE imports from here
+│   ├── models.py                # FrameAnalysis, VLMFrameAssessment, ShiftContext,
+│   │                            #   InterventionDecision, CompanionMessage, AuditEntry, etc.
+│   │                            # Owner: Kevin (finalize first, then freeze)
+│   └── audit.py                 # Shared audit recorder — all 3 agents call this
+│                                # Owner: Kevin
+│
+├── vision/                      # Perception Agent — Caleb
+│   ├── capture.py               # webcam / RTSP frame grabber
+│   ├── preprocess.py            # resize, normalize, crop to face ROI
+│   ├── landmarks.py             # MediaPipe FaceMesh → landmark coords
+│   ├── features.py              # blink rate, eye openness, yawn, gaze
+│   ├── pipeline.py              # aggregates N-frame window → FrameAnalysis (every 2 s)
+│   └── vlm_analyzer.py          # Nemotron-nano-omi → VLMFrameAssessment (every ~10 s)
+│
+├── agents/                      # Agent logic
+│   ├── orchestrator.py          # per-cycle loop; coordinates all agents — Kevin
+│   ├── context_builder.py       # builds ShiftContext from vision + memory — Kevin
+│   ├── safety.py                # Safety Reasoning Agent (ReAct loop) — Kevin
+│   ├── tools.py                 # OpenClaw tool registry + handlers — Kevin
+│   └── companion.py             # Companion Agent — Emilio
+│
+├── llm/                         # LLM client layer
+│   ├── client.py                # Nemotron API client (shared) — Kevin owns, Emilio imports
+│   ├── safety_prompts.py        # Safety Reasoning Agent prompts — Kevin
+│   ├── companion_prompts.py     # Companion Agent prompts — Emilio
+│   └── parser.py                # parse completions → typed dataclasses — Kevin
+│
+├── actions/                     # What happens when agents decide to act
+│   ├── alert.py                 # in-cab alert handler — Kevin
+│   ├── rest_break.py            # rest break handler — Kevin
+│   ├── phone_notify.py          # ntfy push handler — Kevin
+│   ├── rest_finder.py           # Nominatim stop lookup — Emilio
+│   ├── alerting_client.py       # in-cab alert HTTP client — Kevin
+│   ├── notify_client.py         # ntfy HTTP client — Kevin
+│   └── logging_client.py        # local JSONL session logger — Kevin
+│
+├── memory/                      # SQLite persistence layer — Kevin
+│   ├── store.py                 # DB connection, table init
+│   ├── driver_baseline.py       # get_baseline / save_baseline
+│   └── shift_history.py         # append_frame, append_intervention, get_*
+│
+├── frontend/                    # Demo dashboard — Josh
+│   ├── index.html               # dashboard layout (6 panels)
+│   ├── app.js                   # SSE listener + panel updaters
+│   └── styles.css               # NVIDIA-green dark theme
+│
+├── api/                         # FastAPI server — Josh
+│   ├── server.py                # GET / (frontend), GET /stream (SSE), GET /state
+│   └── events.py                # in-process event bus: agents publish, frontend subscribes
+│
+├── config/                      # Kevin
+│   ├── settings.py              # typed Settings object from .env
+│   └── defaults.yaml            # thresholds, window sizes, model IDs
+│
+├── deployment/                  # Josh
+│   ├── nemoclaw-policy.yaml     # NemoClaw sandbox policy (allow/deny rules)
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── brev.yaml
+│   └── setup_brev.sh
+│
+├── tests/                       # Josh (fixtures) + each owner (test cases)
+│   ├── conftest.py              # sample instances of every dataclass
+│   ├── test_vision.py           # vision/ — Caleb
+│   ├── test_agents.py           # agents/ safety + companion — Kevin + Emilio
+│   ├── test_llm.py              # llm/ prompts + parser — Kevin
+│   ├── test_actions.py          # actions/ handlers + clients — Kevin + Emilio
+│   └── test_memory.py           # memory/ — Kevin
+│
+├── main.py                      # Kevin — shift lifecycle, pipeline loop, server startup
+└── requirements.txt
+```
 
 ---
 
 ## Interface Contracts
 
-All types are defined in [`interventions/models.py`](interventions/models.py).
-Import from there — never redefine these types locally.
+All types live in `core/models.py`. Import from there — never redefine locally.
 
-> **Critical path:** `interventions/models.py` must be finalized and committed before
-> anyone else writes a function signature. Josh owns it; if you need a field change,
-> coordinate before building against it.
+### `FrameAnalysis`
+Produced by `vision/pipeline.py` every ~2 s.
+
+```python
+@dataclass
+class FrameAnalysis:
+    timestamp: float
+    driver_id: str
+    blink_rate: float          # blinks/min
+    eye_openness: float        # 0.0–1.0
+    yawn_detected: bool
+    yawn_frequency: float      # yawns/hour
+    gaze_direction: str        # "forward"|"left"|"right"|"down"|"up"
+    gaze_deviation_deg: float
+    confidence: float          # 0.0–1.0
+```
 
 ### `VLMFrameAssessment`
-Produced by `vision/vlm_analyzer.py` via Nemotron-3-Nano-Omi on a ~10 s cadence.
-Provides semantic scene understanding beyond landmark metrics.
+Produced by `vision/vlm_analyzer.py` every ~10 s (Nemotron-nano-omi).
 
 ```python
 @dataclass
 class VLMFrameAssessment:
     timestamp: float
     driver_id: str
-    fatigue_score: float       # 0.0 (fully alert) → 1.0 (severely fatigued)
-    description: str           # natural language, e.g. "driver's head drooping, eyes half-closed"
-    flags: list                # list[str] — e.g. ["eyes_drooping", "head_tilt", "yawning"]
-    confidence: float
-```
-
-### `FrameAnalysis`
-Produced by `vision/pipeline.py` once per analysis window (default 2 s).
-
-```python
-@dataclass
-class FrameAnalysis:
-    timestamp: float           # unix epoch
-    driver_id: str
-    blink_rate: float          # blinks/min in rolling window
-    eye_openness: float        # 0.0 (fully closed) → 1.0 (fully open)
-    yawn_detected: bool        # any yawn event in this window
-    yawn_frequency: float      # yawns/hour rolling estimate
-    gaze_direction: str        # "forward"|"left"|"right"|"down"|"up"
-    gaze_deviation_deg: float  # degrees off center
-    confidence: float          # overall detection confidence 0.0–1.0
+    fatigue_score: float       # 0.0–1.0
+    description: str           # natural language scene description
+    flags: list                # list[str] e.g. ["eyes_drooping", "head_tilt"]
+    confidence: float          # 0.0–1.0
 ```
 
 ### `DriverBaseline`
@@ -243,45 +232,39 @@ class DriverBaseline:
 ```
 
 ### `ShiftTrend`
-Computed by `agent/context_builder.py` from full shift history in memory; gives Nemotron
-a shift-level degradation signal rather than just a recent snapshot vs. static baseline.
+Computed by `agents/context_builder.py` from full shift history.
 
 ```python
 @dataclass
 class ShiftTrend:
     shift_id: str
-    sample_count: int              # FrameAnalysis samples aggregated
-    avg_eye_openness_trend: list   # list[float] — mean eye_openness per time bucket
-    avg_blink_rate_trend: list     # list[float] — mean blink_rate per bucket
-    yawn_count_total: int          # cumulative yawn events this shift
-    intervention_count: int        # total interventions fired this shift
-    trend_bucket_minutes: float    # duration each bucket represents (e.g. 5.0)
+    trend_bucket_minutes: float
+    sample_count: int = 0
+    yawn_count_total: int = 0
+    intervention_count: int = 0
+    avg_eye_openness_trend: list = field(default_factory=list)
+    avg_blink_rate_trend: list = field(default_factory=list)
 ```
 
 ### `ShiftContext`
-Assembled by `agent/context_builder.py`; passed to `reasoning/nemotron.py`.
+Assembled by `agents/context_builder.py`; consumed by both agents.
 
 ```python
 @dataclass
 class ShiftContext:
     driver_id: str
-    shift_id: str              # uuid4, generated at shift start
+    shift_id: str
     shift_elapsed_minutes: float
     current_analysis: FrameAnalysis
-    shift_trend: ShiftTrend    # full-shift trajectory for degradation detection
+    shift_trend: ShiftTrend
     baseline: DriverBaseline
-    recent_window: list = field(default_factory=list)        # list[FrameAnalysis] — last N minutes
-    prior_interventions: list = field(default_factory=list)  # list[InterventionRecord] — this shift
-    vlm_assessment: Optional[VLMFrameAssessment] = None      # latest VLM result; None until first cycle
+    recent_window: list = field(default_factory=list)
+    prior_interventions: list = field(default_factory=list)
+    vlm_assessment: Optional[VLMFrameAssessment] = None
 ```
 
 ### `InterventionDecision`
-Returned by `reasoning/decision.py` after parsing Nemotron JSON output.
-
-`intervention_type` is a **single value per cycle** — graduated escalation happens
-across cycles, not within one decision. Session logging is always-on and is not
-represented here; `orchestrator.py` calls `integrations/logging_service` every cycle
-independent of `should_intervene`. All interventions are driver-addressed only.
+Output of `agents/safety.py`; drives orchestrator dispatch.
 
 ```python
 @dataclass
@@ -289,27 +272,27 @@ class InterventionDecision:
     should_intervene: bool
     severity: str              # "none"|"low"|"medium"|"high"|"critical"
     intervention_type: str     # "none"|"alert"|"rest_break"|"phone_notify"
-    trigger_companion: bool    # True → companion agent also fires this cycle
-    reason: str                # human-readable explanation from Nemotron
-    confidence: float          # 0.0–1.0
-    timestamp: float           # unix epoch
+    trigger_companion: bool    # independent of should_intervene
+    reason: str
+    confidence: float
+    timestamp: float
 ```
 
 ### `CompanionMessage`
-Generated by `agent/companion.py` when `trigger_companion=True`; displayed or read aloud.
+Output of `agents/companion.py`.
 
 ```python
 @dataclass
 class CompanionMessage:
     timestamp: float
     driver_id: str
-    message: str               # what the companion says
+    message: str
     trigger_reason: str        # "fatigue_building"|"long_silence"|"pre_intervention"
-    severity_context: str      # severity level that triggered this turn
+    severity_context: str
 ```
 
 ### `InterventionRecord`
-Written to `memory/shift_history.py` immediately after a handler executes.
+Written to memory after an action handler executes.
 
 ```python
 @dataclass
@@ -317,61 +300,67 @@ class InterventionRecord:
     intervention_id: str       # uuid4
     driver_id: str
     shift_id: str
-    timestamp: float           # unix epoch
-    severity: str              # mirrors InterventionDecision.severity
-    intervention_type: str     # mirrors InterventionDecision.intervention_type
-    action_summary: str        # brief description of what was actually done
+    timestamp: float
+    severity: str
+    intervention_type: str
+    action_summary: str
+    suggested_stops: list = field(default_factory=list)
 ```
+
+### `AuditEntry`
+Produced by `core/audit.py`; published to frontend as `"audit"` SSE events and
+written to `./logs/agent_audit.jsonl`. Unifies agent-level records (tool calls,
+API hits, decisions) with surfaced NemoClaw policy events.
+
+```python
+@dataclass
+class AuditEntry:
+    entry_id: str       # uuid4
+    timestamp: float    # unix epoch
+    source: str         # "perception"|"safety"|"companion"|"nemoclaw"
+    action_type: str    # "tool_call"|"api_call"|"decision"|"policy_event"
+    description: str    # human-readable, e.g. "trigger_alert(severity=high)"
+    verdict: str        # "allowed"|"blocked"|"info"
+    metadata: dict      # open bag: tool args, token counts, model ID, etc.
+    driver_id: str = ""  # empty for nemoclaw entries
+    shift_id: str = ""   # empty for nemoclaw entries
+```
+
+`source="nemoclaw"` is the exclusive marker for NemoClaw policy-level entries —
+the frontend filter and color scheme key off this single field.
 
 ---
 
-## Ownership Split
-
-Build order priority: **Emilio → models.py first** (everyone else blocks on it),
-then Caleb and Kevin can build in parallel immediately.
-
-| Module | Owner | Key output | Build priority |
-|--------|-------|-----------|----------------|
-| `interventions/models.py` | **Emilio** | **critical-path** — all shared dataclasses | **Do first** |
-| `config/` | Emilio | `Settings` + threshold constants | Day 1 |
-| `memory/` | Emilio | `DriverBaseline` + local shift history | Day 1 |
-| `interventions/` (handlers) | Emilio | alert / rest_break / phone_notify execution | Day 1 |
-| `integrations/` (all 4 clients) | Emilio | alerting, ntfy, rest_finder, logging | Day 1 |
-| `vision/capture.py` + `preprocess.py` | Caleb | raw BGR frames from webcam | Day 1 |
-| `vision/landmarks.py` | Caleb | MediaPipe landmark coords per frame | Day 1 |
-| `vision/features.py` | Caleb | blink rate, eye openness, yawn, gaze | Day 1 |
-| `vision/pipeline.py` | Caleb | `FrameAnalysis` iterator | Day 1 |
-| `vision/vlm_analyzer.py` | Caleb | `VLMFrameAssessment` via Nemotron-3-Nano-Omi | Day 1 |
-| `main.py` | Kevin | shift lifecycle (shift_id, start/end) | Day 1 |
-| `agent/subagents.py` | Kevin | agent role + model config declarations | Day 1 |
-| `agent/context_builder.py` | Kevin | `ShiftContext` (merges vision + memory) | Day 1 |
-| `agent/orchestrator.py` | Kevin | ReAct loop + OpenClaw tool dispatch | Day 1 |
-| `agent/companion.py` | Kevin | `CompanionMessage` generation | Day 1 |
-| `agent/tools.py` | Kevin | OpenClaw tool schema | Day 1 |
-| `reasoning/` | Kevin | Nemotron-Super client + prompts + `InterventionDecision` | Day 1 |
-| `nemoclaw-policy.yaml` | Kevin | access policy (confirm syntax w/ NemoClaw docs) | Day 1 |
-| `deployment/` | Josh | Docker, Brev, hardware setup | Later |
-| `tests/` | Josh | full test suite with shared fixtures | Later |
-
-**Rule:** you may read any module's public types but do not import from a sibling's
-_internal_ helpers. Cross-module communication happens only through the dataclasses
-above and the function signatures below.
-
-### Key cross-module function signatures
+## Key Function Signatures
 
 ```python
 # main.py
-def start_shift(driver_id: str) -> tuple[str, float]: ...
-    # returns (shift_id: uuid4 str, shift_start: unix epoch float)
+def start_shift(driver_id: str) -> tuple[str, float]: ...   # (shift_id, shift_start)
 def end_shift(shift_id: str, driver_id: str) -> None: ...
-    # triggers memory/driver_baseline.save_baseline() with updated rolling averages
 
 # vision/pipeline.py
 def run_pipeline(driver_id: str) -> Iterator[FrameAnalysis]: ...
 
 # vision/vlm_analyzer.py
-def analyze_frame(frame_bgr, driver_id: str) -> VLMFrameAssessment: ...
-    # sends frame to Nemotron-3-Nano-Omi; called every ~10 s by pipeline.py
+def assess_frame(frame_jpeg: bytes, driver_id: str, timestamp: float) -> VLMFrameAssessment: ...
+
+# agents/context_builder.py
+def build_context(
+    frame: FrameAnalysis,
+    shift_id: str,
+    shift_start: float,
+    vlm_assessment: Optional[VLMFrameAssessment] = None
+) -> ShiftContext: ...
+
+# agents/safety.py
+def run(context: ShiftContext) -> InterventionDecision: ...
+
+# agents/companion.py
+def generate(context: ShiftContext, prior_messages: list[CompanionMessage]) -> CompanionMessage: ...
+
+# agents/orchestrator.py
+def run_cycle(frame: FrameAnalysis, shift_id: str, shift_start: float,
+              vlm_assessment: Optional[VLMFrameAssessment] = None) -> None: ...
 
 # memory/driver_baseline.py
 def get_baseline(driver_id: str) -> DriverBaseline: ...
@@ -381,80 +370,350 @@ def save_baseline(baseline: DriverBaseline) -> None: ...
 def append_frame(shift_id: str, frame: FrameAnalysis) -> None: ...
 def append_intervention(record: InterventionRecord) -> None: ...
 def get_recent_frames(shift_id: str, minutes: int) -> list[FrameAnalysis]: ...
-def get_all_frames(shift_id: str) -> list[FrameAnalysis]: ...   # used by context_builder for ShiftTrend
+def get_all_frames(shift_id: str) -> list[FrameAnalysis]: ...
 def get_interventions(shift_id: str) -> list[InterventionRecord]: ...
 
-# agent/context_builder.py
-def build_context(
-    frame: FrameAnalysis,
-    shift_id: str,
-    shift_start: float,
-    vlm: Optional[VLMFrameAssessment] = None,
-) -> ShiftContext: ...
-    # internally calls get_recent_frames + get_all_frames to compute ShiftTrend
-
-# reasoning/nemotron.py  — Safety Reasoning Agent (Nemotron-Super, ReAct loop)
-def analyze(context: ShiftContext) -> InterventionDecision: ...
-
-# agent/companion.py  — Companion Agent (Nemotron-Super)
-def generate(context: ShiftContext, prior_messages: list[CompanionMessage]) -> CompanionMessage: ...
-
-# integrations/rest_finder.py
-def find_nearby_stops(lat: float, lon: float, radius_m: int = 5000) -> list[str]: ...
-    # returns list of stop name + distance strings via Nominatim
-
-# agent/tools.py  →  interventions/ seam
-# Each OpenClaw tool wraps one handler: tools.py owns the schema, handler owns the logic.
-# orchestrator.py writes the returned InterventionRecord to memory.
-
-# interventions/alert.py  (rest_break.py and phone_notify.py — same signature)
+# actions/alert.py  (rest_break.py, phone_notify.py — same signature)
 def execute(decision: InterventionDecision, driver_id: str) -> InterventionRecord: ...
-    # rest_break.py also calls integrations/rest_finder to populate record.suggested_stops
+
+# actions/rest_finder.py
+def find_nearby_stops(latitude: float, longitude: float, radius_km: int, max_results: int) -> list: ...
+
+# api/events.py
+def publish(event_type: str, data: dict) -> None: ...
+
+# core/audit.py  — fire-and-forget, never raises, all agents import these
+def start_audit_recorder() -> None: ...
+    # call once at main.py startup; starts writer thread + NemoClaw tail thread; idempotent
+def record_tool_call(agent: str, tool_name: str, args: dict, result: dict, driver_id: str, shift_id: str) -> None: ...
+def record_api_call(agent: str, endpoint: str, model: str, prompt_tokens: int, completion_tokens: int, driver_id: str, shift_id: str) -> None: ...
+def record_decision(agent: str, description: str, metadata: dict, driver_id: str, shift_id: str) -> None: ...
 ```
+
+---
+
+## NemoClaw Policy
+
+`deployment/nemoclaw-policy.yaml` controls runtime access. Show this to judges — then
+show the audit log proving the guardrails fired.
+
+```yaml
+version: "1"
+policy:
+  filesystem:
+    allow:
+      - path: "./safeshift.db"
+        permissions: [read, write]
+      - path: "./logs/"
+        permissions: [read, write]
+    deny:
+      - path: "~/"
+      - path: "/etc/"
+  network:
+    allow:
+      - host: "integrate.api.nvidia.com"   # Nemotron endpoints
+        ports: [443]
+      - host: "ntfy.sh"                     # driver phone only
+        ports: [443]
+      - host: "nominatim.openstreetmap.org" # rest stop finder
+        ports: [443]
+    deny:
+      - host: "*"
+  device:
+    allow:
+      - path: "/dev/video0"
+  shell:
+    deny: "*"
+  audit:
+    log: "./logs/audit.log"
+    level: full
+```
+
+---
+
+## OpenClaw Tool Registry
+
+Declared in `agents/tools.py`. These are the exact schemas Nemotron-Super sees during
+the Safety Reasoning Agent ReAct loop.
+
+**Query tools** (gather info before deciding):
+- `check_baseline(driver_id)` — pulls DriverBaseline from memory
+- `get_shift_trend(shift_id)` — pulls ShiftTrend from shift history
+- `get_recent_interventions(shift_id, last_n_minutes)` — prevents over-escalation
+
+**Action tools** (take effect in the world):
+- `trigger_alert(severity, reason)` → `actions/alert.execute()`
+- `trigger_rest_break(severity, reason, suggested_minutes)` → `actions/rest_break.execute()`
+- `trigger_phone_notify(severity, message)` → `actions/phone_notify.execute()`
+- `log_intervention(intervention_type, severity, action_summary)` — always called last
+
+---
+
+## Escalation Model
+
+```
+severity=low      → trigger_companion=True  only (Companion engages, no hard action)
+severity=medium   → trigger_companion=True  + trigger_alert or rest_break
+severity=high     → trigger_companion=True  + rest_break + phone_notify
+severity=critical → trigger_companion=True  + all actions
+```
+
+Cooldown between same-level interventions: `severity_escalation_minutes` in
+`config/defaults.yaml`. The Safety Reasoning Agent checks `get_recent_interventions`
+before escalating — this is part of the ReAct loop, not hardcoded logic.
+
+---
+
+## Frontend Event Stream
+
+`api/events.py` is the event bus. Agents call `publish()` after each cycle.
+Josh's `api/server.py` forwards events via SSE to `frontend/app.js`.
+
+| Event type | Source | Frontend panel |
+|---|---|---|
+| `"frame"` | orchestrator (every cycle) | Live Metrics |
+| `"vlm"` | orchestrator (every ~10 s) | Perception Agent |
+| `"decision"` | orchestrator (every cycle) | Safety Agent + severity badge |
+| `"companion"` | orchestrator (when triggered) | Companion Agent |
+| `"intervention"` | orchestrator (when triggered) | Intervention Log |
+| `"audit"` | `core/audit.py` writer thread (continuous) | Policy Monitor |
+
+---
+
+## Audit Recorder (`core/audit.py`)
+
+A shared, fire-and-forget helper that all three agents call to record their actions.
+Feeds the **Policy Monitor** panel in the frontend — the key judge demo moment.
+
+### Internal architecture
+
+```
+record_tool_call()  ─┐
+record_api_call()   ─┤── _enqueue(entry) ──▶ _write_queue (bounded, maxsize=500)
+record_decision()   ─┘                              │
+                                           _writer_loop() [single background thread]
+                                                    │
+                                       ┌────────────┴────────────┐
+                                       ▼                         ▼
+                              ./logs/agent_audit.jsonl    api.events.publish("audit", ...)
+                                                                  │
+                                                          frontend Policy Monitor panel
+
+_tail_nemoclaw_log() [daemon thread, polls ./logs/audit.log every 500 ms]
+  → _parse_and_enqueue_nemoclaw_line()
+  → _enqueue(AuditEntry(source="nemoclaw", ...))
+```
+
+- `_write_queue` is a module-level singleton (`queue.Queue(maxsize=500)`). If full, entries are silently dropped — never raises, never blocks an agent.
+- Single writer thread — no file lock contention on the JSONL file.
+- NemoClaw tail uses **polling** (not inotify) — zero extra dependencies, handles log rotation by resetting offset when file shrinks.
+- `start_audit_recorder()` is idempotent — safe to call multiple times during dev.
+
+### NemoClaw log parsing
+
+`_parse_and_enqueue_nemoclaw_line(line)`:
+1. Try JSON parse (structured audit tools emit NDJSON).
+2. Fall back to regex for `ALLOW`/`DENY`/`BLOCK` keywords.
+3. On parse failure: emit `verdict="info"` entry with `metadata={"raw": line}`.
+4. Entire function wrapped in `try/except Exception` — never raises.
+
+Implement the full parser **after** NemoClaw is running and its real log format is known (step 7 in the implementation order below).
+
+### Where each agent calls the recorder
+
+**Caleb — `vision/vlm_analyzer.py`** (2 call sites in `assess_frame()`):
+```python
+from core.audit import record_api_call, record_decision
+
+# after API response received:
+record_api_call("perception", endpoint, model, prompt_tokens, completion_tokens, driver_id, shift_id)
+
+# after VLMFrameAssessment constructed:
+record_decision("perception", f"VLMFrameAssessment: fatigue_score={assessment.fatigue_score:.2f}, flags={assessment.flags}",
+                {"fatigue_score": assessment.fatigue_score, "flags": assessment.flags, "confidence": assessment.confidence},
+                driver_id, shift_id)
+```
+
+**Kevin — `agents/tools.py`** (1 call site per `handle_*` function, 7 total):
+```python
+from core.audit import record_tool_call
+
+# at the end of each handle_* function, after tool executes:
+record_tool_call("safety", tool_name, args_dict, result_dict, driver_id, shift_id)
+```
+
+**Kevin — `agents/safety.py`** (2 call sites):
+```python
+from core.audit import record_api_call, record_decision
+
+# after each complete_with_tools() call in ReAct loop:
+record_api_call("safety", endpoint, model, prompt_tokens, completion_tokens, driver_id, shift_id)
+
+# after final InterventionDecision produced:
+record_decision("safety", f"InterventionDecision: severity={decision.severity}, type={decision.intervention_type}",
+                {"severity": decision.severity, "intervention_type": decision.intervention_type,
+                 "should_intervene": decision.should_intervene, "confidence": decision.confidence},
+                driver_id, shift_id)
+```
+
+**Emilio — `agents/companion.py`** (2 call sites in `generate()`):
+```python
+from core.audit import record_api_call, record_decision
+
+# after complete() returns:
+record_api_call("companion", endpoint, model, prompt_tokens, completion_tokens, driver_id, shift_id)
+
+# after CompanionMessage constructed:
+record_decision("companion", f"CompanionMessage: trigger={msg.trigger_reason}, severity={msg.severity_context}",
+                {"trigger_reason": msg.trigger_reason, "severity_context": msg.severity_context,
+                 "message_preview": msg.message[:80]},
+                driver_id, shift_id)
+```
+
+### Frontend — Policy Monitor (Panel 7)
+
+Panel 7 spans the full dashboard width (3 columns) at the bottom. Entries are
+prepended (newest at top), capped at 200 DOM nodes.
+
+**`frontend/index.html`** — add after Panel 6 inside `<main>`:
+```html
+<section id="policy-monitor">
+  <h2>Policy Monitor <span class="model-tag">NemoClaw</span></h2>
+  <div id="audit-filter">
+    <button class="audit-filter-btn active" data-filter="all">All</button>
+    <button class="audit-filter-btn" data-filter="nemoclaw">NemoClaw</button>
+    <button class="audit-filter-btn" data-filter="safety">Safety Agent</button>
+    <button class="audit-filter-btn" data-filter="perception">Perception</button>
+    <button class="audit-filter-btn" data-filter="companion">Companion</button>
+  </div>
+  <ul id="audit-list"></ul>
+</section>
+```
+
+**`frontend/app.js`** — add to switch + implement handlers:
+```javascript
+case "audit": appendAuditEntry(event.data); break;
+
+function appendAuditEntry(data) {
+  // data: AuditEntry fields as JSON
+  // prepend <li> with: timestamp | source badge | action_type | description | verdict badge
+  // li.dataset.source = data.source  ← used by filter buttons
+  // cap list at 200 items
+  // call applyAuditFilter() after insert
+}
+
+function applyAuditFilter() {
+  const active = document.querySelector(".audit-filter-btn.active").dataset.filter;
+  document.querySelectorAll("#audit-list li").forEach(li => {
+    li.style.display = (active === "all" || li.dataset.source === active) ? "" : "none";
+  });
+}
+// wire filter buttons + call initAuditFilter() at bottom of file
+```
+
+**`frontend/styles.css`** — add:
+- `#policy-monitor { grid-column: 1 / -1; }` — full-width bottom strip
+- `#audit-list` — monospace font, 180px max-height, scroll
+- `.audit-allowed` — green left border (`#76b900`)
+- `.audit-blocked` — red left border (`#e04040`)
+- `.audit-info` — grey left border (`#555`)
+- `.audit-source-perception/safety/companion/nemoclaw` — per-agent color badges
+- `.verdict-allowed/blocked/info` — matching verdict badge colors
+- `.audit-filter-btn` / `.active` — filter button styles
+
+### Demo moment for judges
+
+1. Point at the Policy Monitor — live color-coded stream running during the demo
+2. Filter to **NemoClaw** → show green ALLOWED entries (Nemotron API, ntfy, Nominatim) and a red BLOCKED entry (add a fake fleet-server tool call to prove it)
+3. Filter to **Safety Agent** → show the full ReAct tool call sequence: `check_baseline → get_shift_trend → trigger_rest_break`
+4. Show `./logs/audit.log` in terminal — raw NemoClaw policy log
+5. Show `./logs/agent_audit.jsonl` — structured agent audit trail for post-demo review
+
+---
+
+## Implementation Order
+
+Build in this sequence to unblock parallel work as fast as possible.
+
+### Step 1 — Kevin: `AuditEntry` in `core/models.py`
+Add the dataclass at the end of the file. Team reviews. Freeze.
+**Everyone else is unblocked for audit integration after this.**
+
+### Step 2 — Kevin: `core/audit.py` skeleton
+Implement the queue, writer thread, JSONL write, and `api.events.publish("audit", ...)`.
+The NemoClaw tail thread can be a `pass` loop at first — fill it in at step 7.
+Smoke-test:
+```bash
+python -c "
+from core.audit import start_audit_recorder, record_decision
+start_audit_recorder()
+record_decision('safety', 'test', {}, 'd1', 's1')
+import time; time.sleep(0.2)
+" && cat ./logs/agent_audit.jsonl
+```
+
+### Step 3 — Josh (parallel with step 2): Frontend Panel 7
+Add `<section id="policy-monitor">` to `index.html`, styles to `styles.css`,
+and `appendAuditEntry()` + filter logic to `app.js`.
+Test independently by publishing a fake audit event from a Python shell:
+```python
+from api.events import publish
+publish("audit", {"source": "safety", "action_type": "tool_call",
+                  "description": "trigger_alert(severity=high)", "verdict": "allowed",
+                  "timestamp": 1234567890, "metadata": {}})
+```
+
+### Step 4 — Kevin: integrate into `agents/safety.py` + `agents/tools.py`
+Highest demo value — tool calls are the most visually interesting events.
+Add `record_tool_call` to all 7 `handle_*` functions in `tools.py`.
+Add `record_api_call` + `record_decision` in `safety.py`.
+
+### Step 5 — Caleb: integrate into `vision/vlm_analyzer.py`
+Two call sites at the end of `assess_frame()`.
+
+### Step 6 — Emilio: integrate into `agents/companion.py`
+Two call sites inside `generate()`.
+
+### Step 7 — Kevin: implement `_tail_nemoclaw_log()` fully
+Do this last — run the system end-to-end first, observe the actual NemoClaw log
+format, then calibrate `_parse_and_enqueue_nemoclaw_line()` to match it.
+The demo works without this step; agent-level entries already populate the panel.
+
+### Step 8 — Kevin: `start_audit_recorder()` in `main.py`
+One line before `run_pipeline()`. Activates the tail thread and writer loop.
 
 ---
 
 ## Conventions
 
-**Branches:** `feat/<your-name>/<short-description>` — e.g. `feat/emilio/vision-pipeline`
+**Branches:** `feat/<name>/<description>` — e.g. `feat/emilio/companion-prompts`
 
-**Commits:** imperative mood, ≤ 72 chars — e.g. `add eye openness feature extraction`
+**Commits:** imperative mood, ≤ 72 chars
 
-**Secrets:** all secrets in `.env` (gitignored). `.env.example` holds the keys with
-placeholder values. Never hardcode keys or URLs.
+**Secrets:** `.env` only (gitignored). `.env.example` has placeholder keys.
 
-**Config:** all tuneable numbers (thresholds, window sizes, API URLs) go in
-`config/settings.py` or `config/defaults.yaml`, not inline.
+**Config:** all tuneable values in `config/settings.py` or `config/defaults.yaml`.
 
-**Imports:** use absolute imports (`from interventions.models import FrameAnalysis`),
-not relative.
+**Imports:** absolute only — `from core.models import FrameAnalysis`
 
-**No `print()`:** use Python `logging` (e.g. `logging.info(...)`) so log level is
-controllable from config.
+**No `print()`:** use `logging.info(...)` so log level is controllable.
+
+**`llm/client.py`:** Kevin owns; Emilio imports only. Ask before adding parameters.
 
 ---
 
 ## Open Questions / TBD
 
-- **OpenClaw SDK:** exact package name, import path, and tool-registration API — Kevin
-  to confirm at hackathon start. Also confirm NemoClaw policy YAML field names match
-  the spec at github.com/NVIDIA/NemoClaw.
-- **Nemotron model IDs:** confirm exact model IDs for (a) Nano-Omi VLM and (b)
-  Nemotron-Super reasoning. Current best guesses: `nemotron-3-nano-omi` and
-  `llama-3_3-nemotron-super-49b-v1_5`. Check build.nvidia.com/models on the day.
-- **VLM cadence vs. latency:** 10 s between VLM calls is a guess — calibrate against
-  actual inference time on Brev to find the fastest safe interval.
-- **Companion output channel:** does the CompanionMessage display as text on-screen,
-  get read aloud via TTS (e.g. pyttsx3), or both? TTS is more demo-able; decide day-of.
-- **Rest-stop location source:** Nominatim requires an approximate lat/lon — how does
-  the demo get that? Options: hardcode a demo location, ask the driver at shift start,
-  or use IP geolocation (rough but no hardware needed).
-- **Driver identity at shift start:** CLI arg, env var, or hardcoded for demo? Determines
-  whether `start_shift()` finds an existing baseline or cold-starts from `defaults.yaml`.
-- **ntfy server:** public ntfy.sh (easy for demo) vs. self-hosted (fully private). Either
-  works — treat the topic string as a password.
-- **On-device alert form:** OS notification, terminal bell, or GUI widget — pick whatever
-  demos most visibly on a laptop screen in 3 minutes.
-- **Future extension — pilot mode:** same fatigue signals apply to aviation; the only
-  changes would be camera placement, baseline profiles, and intervention thresholds.
-  Architecture supports it with no structural changes.
+- **OpenClaw SDK:** exact package name and session API — Kevin confirms at hackathon start.
+- **Nemotron-nano-omi endpoint:** confirm model ID and whether it accepts base64 JPEG
+  in the same `integrate.api.nvidia.com/v1` endpoint or a separate one.
+- **VLM frame rate:** if `assess_frame()` latency > 10 s, increase VLM cadence or
+  run it on every Nth pipeline cycle.
+- **Location for rest_finder:** hackathon demo uses a hardcoded city as location proxy
+  (no GPS on laptop). Set `DEMO_LOCATION_LAT` / `DEMO_LOCATION_LON` in `.env`.
+- **ntfy topic:** use ntfy.sh public server with a random topic string (treated like
+  a password). Set `NTFY_TOPIC` in `.env`.
+- **On-device alert:** for demo, OS notification + terminal bell. Decide day-of.
+- **Baseline cold-start:** placeholder values in `config/defaults.yaml` for new drivers.
+- **NemoClaw install:** `curl -fsSL https://nvidia.com/nemoclaw.sh | bash` — confirm
+  on event Wi-Fi before relying on it.
