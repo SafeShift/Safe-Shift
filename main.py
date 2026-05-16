@@ -285,10 +285,11 @@ def main() -> None:
     # VLM:      fire assess_frame() every VLM_INTERVAL_SEC in a background thread.
     # ─────────────────────────────────────────────────────────────────────────
 
-    t_dense  = getattr(config.thresholds, "dense_mode_window_sec",   20.0)
-    t_interval = getattr(config.thresholds, "dense_mode_interval_sec", 2.0)
-    t_droopy = getattr(config.thresholds, "eye_openness_droopy",      0.45)
-    t_blink_high = getattr(config.thresholds, "blink_rate_high",      1.50)
+    t_dense      = getattr(config.thresholds, "dense_mode_window_sec",   20.0)
+    t_interval   = getattr(config.thresholds, "dense_mode_interval_sec", 2.0)
+    t_droopy     = getattr(config.thresholds, "eye_openness_droopy",      0.45)
+    t_blink_high = getattr(config.thresholds, "blink_rate_high",          1.50)
+    MIN_TRIGGER_SEC = 5.0  # minimum seconds between trigger-mode orchestrator calls
 
     latest_vlm: list = [None]
     vlm_thread: threading.Thread = None
@@ -366,7 +367,7 @@ def main() -> None:
             )
             should_run = (
                 (in_dense_mode and (now - last_orch_time) >= t_interval)
-                or (not in_dense_mode and trigger_event)
+                or (not in_dense_mode and trigger_event and (now - last_orch_time) >= MIN_TRIGGER_SEC)
             )
 
             if should_run:
