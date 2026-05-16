@@ -228,8 +228,12 @@ def main() -> None:
         logger.info("Signal %s received — shutting down", sig)
         _shutdown.set()
 
-    signal.signal(signal.SIGINT,  _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    # SIGINT (Ctrl-C): let Python's default KeyboardInterrupt propagate —
+    # the try/finally below handles cleanup. Overriding it on Windows breaks Ctrl-C.
+    try:
+        signal.signal(signal.SIGTERM, _handle_signal)  # graceful kill from OS
+    except (OSError, ValueError):
+        pass  # SIGTERM not available on all Windows configurations
 
     # ── Independent heartbeat thread ─────────────────────────────────────────
     # Uses print(flush=True) — bypasses any logging buffering on Windows threads.
@@ -276,11 +280,11 @@ def main() -> None:
             # Drain latest raw frame for VLM (non-blocking — drop all but newest)
             try:
                 latest_frame_bgr = frame_queue.get_nowait()
-                print("got frame from frame_queue")
             except queue.Empty:
                 pass
 
             # Block until next FrameAnalysis arrives (timeout keeps shutdown snappy)
+            # KeyboardInterrupt (Ctrl-C) will interrupt this call on all platforms.
             try:
                 frame_analysis = analysis_queue.get(timeout=1.0)
             except queue.Empty:
@@ -326,6 +330,9 @@ def main() -> None:
             except Exception as exc:
                 logger.error("orchestrator.run_cycle error: %s", exc, exc_info=True)
 
+    except KeyboardInterrupt:
+        logger.info("Ctrl-C received — shutting down")
+        _shutdown.set()
     finally:
         # KEVIN — memory/driver_baseline.py
         # Recalculates per-driver rolling average from this shift and persists it.
