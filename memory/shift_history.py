@@ -6,6 +6,11 @@ from core.models import FrameAnalysis, InterventionRecord
 from memory.store import get_connection
 
 
+def init_shift(shift_id: str, driver_id: str) -> None:
+    """No-op for SQLite — tables already exist. Called by main.py at shift start."""
+    pass
+
+
 def append_frame(shift_id: str, frame: FrameAnalysis) -> None:
     with get_connection() as conn:
         conn.execute("""
