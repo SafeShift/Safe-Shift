@@ -20,19 +20,27 @@ def send_alert(severity: str, message: str) -> bool:
     import subprocess
     import sys
 
-    # terminal bell — audible in any terminal
-    sys.stdout.write("\a")
-    sys.stdout.flush()
+    _colour = {"low": "\033[93m", "medium": "\033[91m", "high": "\033[41m\033[97m"}
+    reset = "\033[0m"
+    colour = _colour.get(severity, "\033[91m")
 
-    # macOS OS notification — visible on screen during demo
-    title = f"SafeShift Alert [{severity.upper()}]"
+    # big coloured banner — always visible in any terminal, great demo moment
+    banner = f"{colour}"
+    banner += f"\n{'='*60}\n"
+    banner += f"  ⚠  SAFESHIFT ALERT [{severity.upper()}]\n"
+    banner += f"  {message}\n"
+    banner += f"{'='*60}\n"
+    banner += reset
+    print(banner, flush=True)
+
+    # macOS OS notification as bonus — silent fail if permissions not granted
     try:
         subprocess.run(
             ["osascript", "-e",
-             f'display notification "{message}" with title "{title}"'],
-            check=True, capture_output=True,
+             f'display notification "{message}" with title "SafeShift [{severity.upper()}]"'],
+            capture_output=True, timeout=2,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        pass  # non-macOS or osascript unavailable — bell still fired
+    except Exception:
+        pass
 
     return True
