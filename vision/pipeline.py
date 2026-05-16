@@ -76,9 +76,15 @@ class VisionPipeline:
             frame_queue:    queue.Queue for raw BGR frames (maxsize recommended: 5).
             analysis_queue: queue.Queue for FrameAnalysis objects.
         """
+        _frame_n = 0
         for frame in self.capture:
+            time.sleep(0)  # yield GIL so other threads (heartbeat, main) can run
+            _frame_n += 1
             timestamp_ms = int(time.time() * 1000)
             now = time.time()
+
+            if _frame_n % 30 == 0:
+                logger.info("pipeline: %d frames captured", _frame_n)
 
             # ── Landmark extraction ──────────────────────────────────────────
             preprocessed = preprocess(frame)
@@ -88,7 +94,6 @@ class VisionPipeline:
             if result.face_landmarks:
                 features = self.feature_extractor(result.face_landmarks[0])
                 self.aggregator.update(features, timestamp=now)
-                print("features produced")
             else:
                 logger.debug("No face detected at t=%.3f", now)
 
@@ -106,10 +111,11 @@ class VisionPipeline:
                 except queue.Full:
                     logger.warning("analysis_queue full — dropping FrameAnalysis at t=%.3f", now)
                 self._last_flush = now
-                logger.debug(
-                    "FrameAnalysis flushed: EAR=%.3f blinks/min=%.1f yawn=%s gaze=%s",
+                logger.info(
+                    "vision: eye=%.3f blinks/min=%.1f yawn=%s gaze=%s conf=%.2f",
                     analysis.eye_openness,
                     analysis.blink_rate,
                     analysis.yawn_detected,
                     analysis.gaze_direction,
+                    analysis.confidence,
                 )
