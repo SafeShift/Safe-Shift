@@ -25,6 +25,11 @@ def execute(decision, driver_id: str, shift_id: str = "") -> "InterventionRecord
     from core.models import InterventionRecord
     from actions.rest_finder import find_nearby_stops, format_stop_list
     from actions.notify_client import send_push
+    from actions.alerting_client import send_alert
+
+    # critical severity: fire the audible alarm automatically before the rest stop recommendation
+    if decision.severity == "critical":
+        send_alert(severity="critical", message=decision.reason)
 
     lat = float(os.getenv("DEMO_LAT", "36.9916"))
     lon = float(os.getenv("DEMO_LON", "-122.0583"))

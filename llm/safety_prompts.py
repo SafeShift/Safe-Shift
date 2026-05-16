@@ -19,11 +19,11 @@ Reasoning style:
 - All baseline metrics, shift trend, and prior interventions are already provided in the
   prompt. Do NOT call check_baseline or get_recent_interventions — that data is there.
 - Assess the provided data, call up to TWO action tools if needed, then emit the final JSON.
-- Escalation ladder — follow this strictly:
+- Escalation ladder — follow this strictly. Call EXACTLY ONE tool:
     low      → trigger_alert
     medium   → trigger_alert
     high     → trigger_rest_break
-    critical → trigger_alert, then trigger_rest_break
+    critical → trigger_rest_break  (alarm fires automatically, no need to also call trigger_alert)
 - Phone notifications are handled automatically — do NOT call trigger_phone_notify.
 - Set trigger_companion=true at severity low/medium.
 - Do NOT call log_intervention — logging is handled automatically by the system.

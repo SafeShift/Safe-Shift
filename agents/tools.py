@@ -64,7 +64,7 @@ TOOLS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "severity": {"type": "string", "enum": ["low", "medium", "critical"]},
+                "severity": {"type": "string", "enum": ["low", "medium"]},
                 "reason": {"type": "string"}
             },
             "required": ["severity", "reason"]
