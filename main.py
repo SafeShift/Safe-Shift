@@ -22,6 +22,10 @@ import time
 import uuid
 
 from config.settings import load_config
+from memory.store import MemoryStore
+from llm.client import NemotronClient
+from agents.safety import SafetyAgent
+from agents.orchestrator import Orchestrator
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Optional imports — stubs keep main.py runnable before teammates finish
@@ -36,16 +40,15 @@ try:
 except ImportError:
     def start_audit_recorder(): pass
 
-# KEVIN — implement agents/orchestrator.py
-# run_cycle() receives one FrameAnalysis + optional VLMFrameAssessment per cycle.
-# It builds ShiftContext, runs Safety Agent, optionally fires Companion Agent,
-# dispatches action handlers, logs to memory, and publishes SSE events.
-# Signature: run_cycle(frame, shift_id, shift_start, vlm_assessment=None) -> None
+# EMILIO — implement agents/companion.py
+# CompanionAgent(config, client) — Emilio's persona agent.
+# generate(context, prior_messages, severity) -> CompanionMessage
 try:
-    from agents.orchestrator import run_cycle
+    from agents.companion import CompanionAgent
 except ImportError:
-    def run_cycle(frame, shift_id, shift_start, vlm_assessment=None):
-        logging.debug("orchestrator stub — frame ts=%.3f", frame.timestamp)
+    class CompanionAgent:
+        def __init__(self, config, client): pass
+        def generate(self, context, prior_messages, severity): return None
 
 # CALEB — implement vision/vlm_analyzer.py
 # assess_frame() sends a BGR frame to Nemotron-3-Nano-Omi VLM and returns
@@ -58,20 +61,20 @@ except ImportError:
 
 # KEVIN — implement memory/shift_history.py
 # init_shift() creates the shift row in SQLite so append_frame() calls succeed.
-# Signature: init_shift(shift_id, driver_id) -> None
+# Signature: init_shift(shift_id, driver_id, store) -> None
 try:
     from memory.shift_history import init_shift
 except ImportError:
-    def init_shift(shift_id, driver_id): pass
+    def init_shift(shift_id, driver_id, store): pass
 
-# KEVIN — implement memory/driver_baseline.py
+# KEVIN — implement memory/driver_baseline.py (already done)
 # update_baseline_from_shift() reads this shift's FrameAnalysis rows and
 # recalculates the rolling per-driver average, then persists it.
-# Signature: update_baseline_from_shift(shift_id, driver_id) -> None
+# Signature: update_baseline_from_shift(shift_id, driver_id, store, config) -> None
 try:
     from memory.driver_baseline import update_baseline_from_shift
 except ImportError:
-    def update_baseline_from_shift(shift_id, driver_id): pass
+    def update_baseline_from_shift(shift_id, driver_id, store, config): pass
 
 # JOSH — implement api/server.py
 # FastAPI app exposing GET / (frontend), GET /stream (SSE), GET /state.
@@ -100,7 +103,7 @@ VLM_INTERVAL_SEC = 10.0
 # Shift lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
 
-def start_shift(driver_id: str) -> tuple:
+def start_shift(driver_id: str, store) -> tuple:
     """Generate shift_id + shift_start; create memory row.
 
     Returns:
@@ -108,16 +111,16 @@ def start_shift(driver_id: str) -> tuple:
     """
     shift_id = str(uuid.uuid4())
     shift_start = time.time()
-    init_shift(shift_id, driver_id)
+    init_shift(shift_id, driver_id, store)
     logger.info("Shift started  driver=%s  shift_id=%s", driver_id, shift_id)
     return shift_id, shift_start
 
 
-def end_shift(shift_id: str, driver_id: str) -> None:
+def end_shift(shift_id: str, driver_id: str, store, config) -> None:
     """Update DriverBaseline from this shift's data and close out."""
     logger.info("Shift ending   driver=%s  shift_id=%s", driver_id, shift_id)
     try:
-        update_baseline_from_shift(shift_id, driver_id)
+        update_baseline_from_shift(shift_id, driver_id, store, config)
     except Exception as exc:
         logger.error("end_shift: baseline update failed: %s", exc)
     logger.info("Shift ended.")
@@ -152,12 +155,14 @@ def _start_vision_pipeline(config, frame_queue, analysis_queue) -> threading.Thr
     analysis_queue receives FrameAnalysis objects every analysis_window_sec.
     """
     pipeline = VisionPipeline(config)
-    t = threading.Thread(
-        target=pipeline.run,
-        args=(frame_queue, analysis_queue),
-        name="vision-pipeline",
-        daemon=True,
-    )
+
+    def _run_with_logging():
+        try:
+            pipeline.run(frame_queue, analysis_queue)
+        except Exception as exc:
+            logger.error("Vision pipeline thread crashed: %s", exc, exc_info=True)
+
+    t = threading.Thread(target=_run_with_logging, name="vision-pipeline", daemon=True)
     t.start()
     logger.info("Vision pipeline thread started")
     return t
@@ -182,14 +187,32 @@ def _fire_vlm_async(frame_bgr, driver_id: str, timestamp: float,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    config = load_config()
+    config    = load_config()
     driver_id = config.driver.driver_id
+    logger.info("config OK  driver=%s  db=%s  camera=%s",
+                driver_id, config.driver.db_path, config.vision.camera_index)
+
+    # ── Construct all agents/services with injected config ────────────────────
+    store = MemoryStore(config)
+    logger.info("MemoryStore OK  db=%s", store._db_path)
+
+    client = NemotronClient(config)
+    logger.info("NemotronClient OK  base_url=%s", config.api.nemotron_base_url)
+
+    safety = SafetyAgent(config, client)
+    logger.info("SafetyAgent OK  model=%s", safety._model)
+
+    companion = CompanionAgent(config, client)
+    logger.info("CompanionAgent OK")
+
+    orchestrator = Orchestrator(config, safety, companion, store)
+    logger.info("Orchestrator OK")
 
     # KEVIN — core/audit.py: starts background JSONL writer + NemoClaw tail thread
     start_audit_recorder()
 
     # KEVIN — memory/shift_history.py: creates shift row; returns shift_id + shift_start
-    shift_id, shift_start = start_shift(driver_id)
+    shift_id, shift_start = start_shift(driver_id, store)
 
     # JOSH — api/server.py: FastAPI server for frontend SSE stream
     _start_api_server(config)
@@ -205,8 +228,34 @@ def main() -> None:
         logger.info("Signal %s received — shutting down", sig)
         _shutdown.set()
 
-    signal.signal(signal.SIGINT,  _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    # SIGINT (Ctrl-C): let Python's default KeyboardInterrupt propagate —
+    # the try/finally below handles cleanup. Overriding it on Windows breaks Ctrl-C.
+    try:
+        signal.signal(signal.SIGTERM, _handle_signal)  # graceful kill from OS
+    except (OSError, ValueError):
+        pass  # SIGTERM not available on all Windows configurations
+
+    # ── Independent heartbeat thread ─────────────────────────────────────────
+    # Uses print(flush=True) — bypasses any logging buffering on Windows threads.
+    def _heartbeat_loop():
+        import sys
+        try:
+            n = 0
+            while not _shutdown.is_set():
+                n += 1
+                names = [t.name for t in threading.enumerate()]
+                vision = "alive" if "vision-pipeline" in names else "DEAD"
+                print(
+                    f"[hb#{n}] vision={vision} frame_q={frame_queue.qsize()} "
+                    f"analysis_q={analysis_queue.qsize()} threads={names}",
+                    flush=True, file=sys.stderr,
+                )
+                time.sleep(2)
+        except Exception as exc:
+            print(f"[HEARTBEAT CRASHED] {exc}", flush=True, file=sys.stderr)
+
+    threading.Thread(target=_heartbeat_loop, name="heartbeat", daemon=True).start()
+    print("[main] heartbeat thread launched", flush=True)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     # Each iteration:
@@ -220,8 +269,10 @@ def main() -> None:
     vlm_thread: threading.Thread = None
     last_vlm_time = 0.0
     latest_frame_bgr = None
+    cycle_count = 0
 
     logger.info("SafeShift running. Ctrl-C to stop.")
+    print("[main] entering main loop", flush=True)
 
     try:
         while not _shutdown.is_set():
@@ -235,10 +286,16 @@ def main() -> None:
                 pass
 
             # Block until next FrameAnalysis arrives (timeout keeps shutdown snappy)
+            # KeyboardInterrupt (Ctrl-C) will interrupt this call on all platforms.
             try:
                 frame_analysis = analysis_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
+
+            cycle_count += 1
+            logger.info("cycle %d — FrameAnalysis received  eye=%.3f blinks=%.1f yawn=%s gaze=%s",
+                        cycle_count, frame_analysis.eye_openness, frame_analysis.blink_rate,
+                        frame_analysis.yawn_detected, frame_analysis.gaze_direction)
 
             now = time.time()
 
@@ -264,19 +321,24 @@ def main() -> None:
             # → publish SSE events to frontend.
             # vlm_assessment is None until the first VLM cycle completes (~10 s in).
             try:
-                run_cycle(
+                logger.info("cycle %d — calling orchestrator.run_cycle", cycle_count)
+                orchestrator.run_cycle(
                     frame=frame_analysis,
                     shift_id=shift_id,
                     shift_start=shift_start,
                     vlm_assessment=latest_vlm[0],
                 )
+                logger.info("cycle %d — run_cycle done", cycle_count)
             except Exception as exc:
                 logger.error("orchestrator.run_cycle error: %s", exc, exc_info=True)
 
+    except KeyboardInterrupt:
+        logger.info("Ctrl-C received — shutting down")
+        _shutdown.set()
     finally:
         # KEVIN — memory/driver_baseline.py
         # Recalculates per-driver rolling average from this shift and persists it.
-        end_shift(shift_id, driver_id)
+        end_shift(shift_id, driver_id, store, config)
         logger.info("Goodbye.")
 
 

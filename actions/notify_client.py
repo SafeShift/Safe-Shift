@@ -21,9 +21,10 @@ def send_push(title: str, message: str, priority: str = "high") -> bool:
         True if the ntfy server accepted the request
     """
     import requests
-    from config.settings import config
+    from config.settings import load_config
+    _cfg = load_config()
 
-    url = f"{config.notifications.ntfy_server}/{config.notifications.ntfy_topic}"
+    url = f"{_cfg.notifications.ntfy_server}/{_cfg.notifications.ntfy_topic}"
     try:
         resp = requests.post(
             url,

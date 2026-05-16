@@ -17,13 +17,12 @@ and to trigger graduated interventions (alert → rest_break → phone_notify).
 
 Reasoning style:
 - Think step by step before acting.
-- Always check baseline and shift trend before deciding on an intervention.
-- Check recent interventions to avoid over-escalation within the cooldown window.
+- Always check baseline and recent interventions before deciding.
 - Prefer the least disruptive intervention that addresses the risk.
-- Set trigger_companion=true at severity low/medium so the Companion Agent engages
-  before a hard intervention is needed.
+- Set trigger_companion=true at severity low/medium.
+- Do NOT call log_intervention — logging is handled automatically by the system.
 
-Output: after calling any action tool, emit a final JSON block:
+Output: after deciding, emit a final JSON block (do not call any more tools after this):
 {
   "should_intervene": bool,
   "severity": "none|low|medium|high|critical",
@@ -45,6 +44,7 @@ def build_user_message(context) -> str:
 
     lines = [
         f"=== DRIVER STATUS — {context.shift_elapsed_minutes:.1f} min into shift ===",
+        f"shift_id: {context.shift_id}  |  driver_id: {context.driver_id}",
         "",
         "CURRENT READINGS (vs personal baseline):",
         f"  Blink rate:    {a.blink_rate:.1f} blinks/min  (baseline {b.avg_blink_rate:.1f}, {blink_pct:+.0f}%)",
@@ -90,7 +90,8 @@ def build_user_message(context) -> str:
 
     lines += [
         "",
-        "Use your tools to check baseline and recent interventions before deciding.",
+        f"Use shift_id='{context.shift_id}' and driver_id='{context.driver_id}' for all tool calls.",
+        "Check baseline and recent interventions before deciding.",
         "Emit the final JSON decision block after calling any action tool.",
     ]
 

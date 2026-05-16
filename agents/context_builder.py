@@ -14,13 +14,15 @@ Imports from: core.models, memory.driver_baseline, memory.shift_history
 """
 
 
-def build_context(frame, shift_id: str, shift_start: float, vlm_assessment=None):
+def build_context(frame, shift_id: str, shift_start: float, store, config, vlm_assessment=None):
     """Assemble and return a ShiftContext for the current cycle.
 
     Args:
         frame: FrameAnalysis from vision/pipeline.py
         shift_id: active shift UUID
         shift_start: unix epoch of shift start
+        store: MemoryStore instance
+        config: loaded config SimpleNamespace
         vlm_assessment: latest VLMFrameAssessment or None if not yet available
 
     Returns:
@@ -32,10 +34,10 @@ def build_context(frame, shift_id: str, shift_start: float, vlm_assessment=None)
     from memory.shift_history import get_recent_frames, get_all_frames, get_interventions
 
     shift_elapsed_minutes = (time.time() - shift_start) / 60
-    baseline = get_baseline(frame.driver_id)
-    recent_window = get_recent_frames(shift_id, minutes=10)
-    prior_interventions = get_interventions(shift_id)
-    all_frames = get_all_frames(shift_id)
+    baseline = get_baseline(frame.driver_id, store, config)
+    recent_window = get_recent_frames(shift_id, store, minutes=10)
+    prior_interventions = get_interventions(shift_id, store)
+    all_frames = get_all_frames(shift_id, store)
 
     trend = _compute_shift_trend(shift_id, all_frames, bucket_minutes=5.0)
 

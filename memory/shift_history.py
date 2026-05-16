@@ -3,11 +3,15 @@ import json
 import time
 
 from core.models import FrameAnalysis, InterventionRecord
-from memory.store import get_connection
 
 
-def append_frame(shift_id: str, frame: FrameAnalysis) -> None:
-    with get_connection() as conn:
+def init_shift(shift_id: str, driver_id: str, store) -> None:
+    """No-op for SQLite — tables already exist. Called by main.py at shift start."""
+    pass
+
+
+def append_frame(shift_id: str, frame: FrameAnalysis, store) -> None:
+    with store.get_connection() as conn:
         conn.execute("""
             INSERT INTO frames (shift_id, driver_id, timestamp, blink_rate, eye_openness,
                                 yawn_detected, yawn_frequency, gaze_direction,
@@ -20,8 +24,8 @@ def append_frame(shift_id: str, frame: FrameAnalysis) -> None:
         ))
 
 
-def append_intervention(record: InterventionRecord) -> None:
-    with get_connection() as conn:
+def append_intervention(record: InterventionRecord, store) -> None:
+    with store.get_connection() as conn:
         conn.execute("""
             INSERT INTO interventions (intervention_id, driver_id, shift_id, timestamp,
                                        severity, intervention_type, action_summary, suggested_stops)
@@ -33,9 +37,9 @@ def append_intervention(record: InterventionRecord) -> None:
         ))
 
 
-def get_recent_frames(shift_id: str, minutes: int) -> list:
+def get_recent_frames(shift_id: str, store, minutes: int = 10) -> list:
     cutoff = time.time() - (minutes * 60)
-    with get_connection() as conn:
+    with store.get_connection() as conn:
         rows = conn.execute("""
             SELECT * FROM frames WHERE shift_id = ? AND timestamp >= ?
             ORDER BY timestamp ASC
@@ -43,16 +47,16 @@ def get_recent_frames(shift_id: str, minutes: int) -> list:
     return [_row_to_frame(row) for row in rows]
 
 
-def get_all_frames(shift_id: str) -> list:
-    with get_connection() as conn:
+def get_all_frames(shift_id: str, store) -> list:
+    with store.get_connection() as conn:
         rows = conn.execute("""
             SELECT * FROM frames WHERE shift_id = ? ORDER BY timestamp ASC
         """, (shift_id,)).fetchall()
     return [_row_to_frame(row) for row in rows]
 
 
-def get_interventions(shift_id: str) -> list:
-    with get_connection() as conn:
+def get_interventions(shift_id: str, store) -> list:
+    with store.get_connection() as conn:
         rows = conn.execute("""
             SELECT * FROM interventions WHERE shift_id = ? ORDER BY timestamp ASC
         """, (shift_id,)).fetchall()
