@@ -12,6 +12,7 @@ build/
 .venv/
 venv/
 env/
+test_capture.py
 
 # Environment & secrets
 .env

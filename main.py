@@ -23,7 +23,9 @@ import config
 from vision import pipeline
 
 
-def main(config):
+def main():
+    config = config.load_config()
+    
     # 1. Read driver_id from config/environment
     driver_id = get_driver_id_from_config()
 
@@ -55,4 +57,4 @@ def main(config):
 
 if __name__ == "__main__":
     # parse args
-    main(config)
+    main()
