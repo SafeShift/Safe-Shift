@@ -1,9 +1,10 @@
 """End-to-end vision pipeline: capture → landmarks → features → FrameAnalysis.
 
 VisionPipeline.run() is a blocking loop intended to run in its own thread/process.
-It writes to two queues consumed by the orchestrator:
-  - frame_queue    : raw BGR frames for visualization / VLM sampling
-  - analysis_queue : FrameAnalysis objects (one per analysis_window_sec)
+It writes to one queue consumed by the orchestrator:
+  - output_queue : (frame_bgr, FrameAnalysis) tuples, one per captured frame
+
+An optional frame_callback is called on every frame for full-fps display (MJPEG feed).
 
 Config expected (config.vision namespace):
   media_source, camera_index, image_dir, target_fps,
@@ -66,15 +67,14 @@ class VisionPipeline:
             fps=v.target_fps,
         )
 
-        self._last_flush = time.time()
         logger.info("VisionPipeline initialised (driver=%s, window=%ss)", self.driver_id, self.window_sec)
 
-    def run(self, frame_queue: queue.Queue, analysis_queue: queue.Queue):
+    def run(self, output_queue: queue.Queue, frame_callback=None):
         """Main processing loop. Blocks until the capture source is exhausted or the process is killed.
 
         Args:
-            frame_queue:    queue.Queue for raw BGR frames (maxsize recommended: 5).
-            analysis_queue: queue.Queue for FrameAnalysis objects.
+            output_queue:   queue.Queue receiving (frame_bgr, FrameAnalysis) tuples every frame.
+            frame_callback: optional callable(frame_bgr) invoked every frame for full-fps display.
         """
         _frame_n = 0
         for frame in self.capture:
@@ -86,9 +86,18 @@ class VisionPipeline:
             if _frame_n % 30 == 0:
                 logger.info("pipeline: %d frames captured", _frame_n)
 
+            mirrored = cv2.flip(frame, 1)
+
+            # ── Full-fps display callback (MJPEG feed) ───────────────────────
+            if frame_callback is not None:
+                try:
+                    frame_callback(mirrored)
+                except Exception:
+                    pass
+
             # ── Landmark extraction ──────────────────────────────────────────
             preprocessed = preprocess(frame)
-            result   = self.landmark_extractor(preprocessed, timestamp_ms)
+            result = self.landmark_extractor(preprocessed, timestamp_ms)
 
             # ── Feature extraction (only when a face is detected) ────────────
             if result.face_landmarks:
@@ -97,25 +106,15 @@ class VisionPipeline:
             else:
                 logger.debug("No face detected at t=%.3f", now)
 
-            # ── Push mirrored raw frame for visualization / VLM sampling ──────────────
-            try:
-                frame_queue.put_nowait(cv2.flip(frame, 1))  # mirror for display
-            except queue.Full:
-                pass  # drop oldest isn't worth the lock; consumer lags behind
-
-            # ── Flush aggregated FrameAnalysis every window_sec ─────────────
-            if now - self._last_flush >= self.window_sec:
-                analysis = self.aggregator.flush(timestamp=now, driver_id=self.driver_id)
-                try:
-                    analysis_queue.put(analysis, timeout=0.5)
-                except queue.Full:
-                    logger.warning("analysis_queue full — dropping FrameAnalysis at t=%.3f", now)
-                self._last_flush = now
+            # ── Flush rolling window → emit (frame, analysis) pair ───────────
+            analysis = self.aggregator.flush(timestamp=now, driver_id=self.driver_id)
+            if _frame_n % 30 == 0:
                 logger.info(
                     "vision: eye=%.3f blinks/min=%.1f yawn=%s gaze=%s conf=%.2f",
-                    analysis.eye_openness,
-                    analysis.blink_rate,
-                    analysis.yawn_detected,
-                    analysis.gaze_direction,
-                    analysis.confidence,
+                    analysis.eye_openness, analysis.blink_rate,
+                    analysis.yawn_detected, analysis.gaze_direction, analysis.confidence,
                 )
+            try:
+                output_queue.put_nowait((mirrored, analysis))
+            except queue.Full:
+                pass  # consumer lagging — drop this pair, keep pipeline running
