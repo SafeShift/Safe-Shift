@@ -1,18 +1,42 @@
-"""Load environment variables and expose typed settings + intervention threshold constants.
+"""Load and expose typed config from defaults.yaml and .env."""
+import os
+from pathlib import Path
+from types import SimpleNamespace
 
-Typed constants to expose (stub — implement by loading config/defaults.yaml + .env):
-  # Thresholds (from defaults.yaml)
-  SEVERITY_ESCALATION_MINUTES: float   # key: severity_escalation_minutes
-  ANALYSIS_WINDOW_SEC: float           # key: analysis_window_sec
-  RECENT_WINDOW_MINUTES: float         # key: recent_window_minutes
-  EYE_OPENNESS_DROOPY: float           # key: thresholds.eye_openness_droopy
-  BLINK_RATE_LOW: float                # key: thresholds.blink_rate_low
-  BLINK_RATE_HIGH: float               # key: thresholds.blink_rate_high
-  YAWN_FREQUENCY_ALERT: float          # key: thresholds.yawn_frequency_alert
-  GAZE_OFF_FORWARD_SEC: float          # key: thresholds.gaze_off_forward_sec
-  # Env vars (from .env)
-  DRIVER_ID: str
-  CAMERA_INDEX: int
-  NEMOTRON_API_KEY: str
-  NEMOTRON_BASE_URL: str
-"""
+import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _to_namespace(d):
+    if isinstance(d, dict):
+        return SimpleNamespace(**{k: _to_namespace(v) for k, v in d.items()})
+    return d
+
+
+def load_config(path=None):
+    if path is None:
+        path = Path(__file__).parent / "defaults.yaml"
+    with open(path) as f:
+        data = yaml.safe_load(f)
+
+    data["api"] = {
+        "nemotron_api_key": os.environ["NEMOTRON_API_KEY"],
+        "nemotron_base_url": os.getenv("NEMOTRON_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+        "nemotron_super_model": os.getenv("NEMOTRON_SUPER_MODEL", "nvidia/llama-3_3-nemotron-super-49b-v1_5"),
+        "nemotron_companion_model": os.getenv("NEMOTRON_COMPANION_MODEL", "nvidia/nemotron-3-voicechat"),
+        "nemotron_vlm_model": os.getenv("NEMOTRON_VLM_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
+    }
+    data["driver"] = {
+        "driver_id": os.getenv("DRIVER_ID", "driver_001"),
+        "db_path": os.getenv("DB_PATH", "./safeshift.db"),
+        "camera_index": int(os.getenv("CAMERA_INDEX", "0")),
+    }
+    data["notifications"] = {
+        "ntfy_topic": os.getenv("NTFY_TOPIC", "safeshift-alerts"),
+        "ntfy_server": os.getenv("NTFY_SERVER", "https://ntfy.sh"),
+        "alert_endpoint": os.getenv("ALERT_ENDPOINT", "http://localhost:8080/alert"),
+    }
+
+    return _to_namespace(data)
