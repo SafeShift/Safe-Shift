@@ -26,7 +26,8 @@ Rules:
 - Keep messages under 2 sentences.
 - Ask a question when possible — keeps the driver verbally engaged.
 
-Output: a single plain-text message (no JSON, no markdown).
+IMPORTANT: Reply with ONLY the message itself. No preamble, no explanation, no quotes.
+Just the words the companion would say out loud. Nothing else.
 """
 
 

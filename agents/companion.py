@@ -24,6 +24,7 @@ Imports from: core.models, llm.client, llm.companion_prompts
 import subprocess
 import time
 
+
 from core.models import CompanionMessage, ShiftContext
 from llm.client import complete
 from llm.companion_prompts import COMPANION_SYSTEM_PROMPT, build_user_message
@@ -49,7 +50,7 @@ def generate(context: ShiftContext, prior_messages: list, severity: str, model: 
         model=model,
         messages=messages,
         temperature=0.8,   # higher than safety agent — we want natural, varied conversation
-        max_tokens=80,     # keep it short; companion speaks in 1-2 sentences
+        max_tokens=300,    # enough room for model to think then produce a short response
     )
     message_text = response.strip()
     _speak(message_text)
@@ -70,9 +71,16 @@ def _infer_trigger_reason(severity: str, context: ShiftContext) -> str:
     return "fatigue_building"
 
 
-def _speak(text: str) -> None:
-    # macOS TTS — reads the companion message aloud; no-ops silently on non-Mac
+def _speak(text: str, voice: str = "en-US-AriaNeural") -> None:
+    # edge-tts — much more natural than macOS say; falls back silently on failure
     try:
-        subprocess.Popen(["say", "-v", "Samantha", text])
-    except FileNotFoundError:
+        import asyncio, edge_tts, tempfile, os
+        async def _play():
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                tmp = f.name
+            await edge_tts.Communicate(text, voice).save(tmp)
+            subprocess.run(["afplay", tmp], check=True)
+            os.unlink(tmp)
+        asyncio.run(_play())
+    except Exception:
         pass
