@@ -49,7 +49,7 @@ def generate(context: ShiftContext, prior_messages: list, severity: str, model: 
         model=model,
         messages=messages,
         temperature=0.8,   # higher than safety agent — we want natural, varied conversation
-        max_tokens=80,     # keep it short; companion speaks in 1-2 sentences
+        max_tokens=300,    # enough room for model to think then produce a short response
     )
     message_text = response.strip()
     _speak(message_text)
