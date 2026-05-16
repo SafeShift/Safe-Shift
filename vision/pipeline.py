@@ -54,7 +54,9 @@ class VisionPipeline:
         )
 
         self.landmark_extractor = FaceLandmarkExtractor(model_path=v.flmk_model_path)
-        self.feature_extractor  = FaceFeatureExtractor()
+        self.feature_extractor  = FaceFeatureExtractor(
+            yawn_open_sec=getattr(config.thresholds, "yawn_open_sec", 2.0),
+        )
         self.aggregator         = FeatureAggregator(
             window_sec=self.window_sec,
             fps=v.target_fps,

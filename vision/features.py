@@ -179,9 +179,13 @@ class FaceFeatureExtractor:
         self,
         ear_blink_threshold: float = EAR_BLINK_THRESHOLD,
         mar_yawn_threshold:  float = MAR_YAWN_THRESHOLD,
+        yawn_open_sec:       float = 2.0,
     ):
         self.ear_blink_threshold = ear_blink_threshold
         self.mar_yawn_threshold  = mar_yawn_threshold
+        self.yawn_open_sec       = yawn_open_sec
+        self._mouth_open_since: Optional[float] = None   # timestamp when mouth opened
+        self._yawn_active: bool = False                   # True once threshold met; stays until mouth closes
 
     def __call__(self, face_landmarks) -> FrameFeatures:
         """Compute features from a single face landmark list (478 NormalizedLandmark).
@@ -200,12 +204,32 @@ class FaceFeatureExtractor:
 
         mar = _mar(lm, _MOUTH_MAR)
 
+        # Yawn: mouth must stay open for yawn_open_sec to trigger;
+        # once triggered, fires continuously until mouth closes.
+        now = time.time()
+        mouth_open = mar > self.mar_yawn_threshold
+        if self._yawn_active:
+            # Stay active until mouth closes
+            if not mouth_open:
+                self._yawn_active = False
+                self._mouth_open_since = None
+            yawn_detected = self._yawn_active
+        else:
+            if mouth_open:
+                if self._mouth_open_since is None:
+                    self._mouth_open_since = now
+                if (now - self._mouth_open_since) >= self.yawn_open_sec:
+                    self._yawn_active = True
+            else:
+                self._mouth_open_since = None
+            yawn_detected = self._yawn_active
+
         direction, offset = _gaze(lm)
 
         return FrameFeatures(
             eye_openness   = avg_ear,
             blink_detected = avg_ear < self.ear_blink_threshold,
-            yawn_detected  = mar > self.mar_yawn_threshold,
+            yawn_detected  = yawn_detected,
             gaze_direction = direction,
             gaze_deviation = offset,
             confidence     = 1.0,
