@@ -83,8 +83,10 @@ try:
     import uvicorn
     from api.server import app as fastapi_app
     _HAS_API = True
-except ImportError:
+except Exception as _api_import_err:
     _HAS_API = False
+    import logging as _log
+    _log.getLogger("main").warning("api/server.py import failed: %s", _api_import_err)
 
 from vision.pipeline import VisionPipeline
 
@@ -141,24 +143,30 @@ def _start_api_server(config) -> None:
     host = getattr(config, "api_host", "0.0.0.0")
     port = getattr(config, "api_port", 8080)
     def _run():
-        uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
+        import asyncio
+        try:
+            cfg = uvicorn.Config(fastapi_app, host=host, port=port, log_level="warning")
+            server = uvicorn.Server(cfg)
+            server.install_signal_handlers = lambda: None  # can't install in non-main thread
+            asyncio.run(server.serve())
+        except Exception as exc:
+            logger.error("API server thread crashed: %s", exc, exc_info=True)
     t = threading.Thread(target=_run, name="api-server", daemon=True)
     t.start()
     logger.info("API server started on %s:%d", host, port)
 
 
-def _start_vision_pipeline(config, frame_queue, analysis_queue) -> threading.Thread:
+def _start_vision_pipeline(config, output_queue, frame_callback=None) -> threading.Thread:
     """Start VisionPipeline in a daemon thread.
 
-    CALEB — VisionPipeline is already implemented in vision/pipeline.py.
-    frame_queue  receives raw BGR frames (for VLM sampling + display).
-    analysis_queue receives FrameAnalysis objects every analysis_window_sec.
+    output_queue receives (frame_bgr, FrameAnalysis) tuples on every captured frame.
+    frame_callback is called on every frame for full-fps MJPEG display (optional).
     """
     pipeline = VisionPipeline(config)
 
     def _run_with_logging():
         try:
-            pipeline.run(frame_queue, analysis_queue)
+            pipeline.run(output_queue, frame_callback=frame_callback)
         except Exception as exc:
             logger.error("Vision pipeline thread crashed: %s", exc, exc_info=True)
 
@@ -214,13 +222,25 @@ def main() -> None:
     # KEVIN — memory/shift_history.py: creates shift row; returns shift_id + shift_start
     shift_id, shift_start = start_shift(driver_id, store)
 
+    # Load driver baseline for adaptive dispatch thresholds
+    from memory.driver_baseline import get_baseline
+    baseline = get_baseline(driver_id, store)
+    logger.info("Baseline loaded  blink_rate=%.1f eye_openness=%.3f",
+                baseline.avg_blink_rate, baseline.avg_eye_openness)
+
     # JOSH — api/server.py: FastAPI server for frontend SSE stream
     _start_api_server(config)
 
-    # CALEB — vision/pipeline.py: runs in its own thread, fills both queues
-    frame_queue    = queue.Queue(maxsize=5)   # raw BGR frames (for VLM + display)
-    analysis_queue = queue.Queue(maxsize=5)   # FrameAnalysis (one per window)
-    _start_vision_pipeline(config, frame_queue, analysis_queue)
+    # Resolve frame_callback for full-fps MJPEG feed
+    try:
+        from api.video import set_frame as _frame_callback
+    except ImportError:
+        _frame_callback = None
+
+    # CALEB — vision/pipeline.py: runs in its own thread
+    # output_queue receives (frame_bgr, FrameAnalysis) pairs on every captured frame
+    output_queue = queue.Queue(maxsize=30)
+    _start_vision_pipeline(config, output_queue, frame_callback=_frame_callback)
 
     _shutdown = threading.Event()
 
@@ -236,7 +256,6 @@ def main() -> None:
         pass  # SIGTERM not available on all Windows configurations
 
     # ── Independent heartbeat thread ─────────────────────────────────────────
-    # Uses print(flush=True) — bypasses any logging buffering on Windows threads.
     def _heartbeat_loop():
         import sys
         try:
@@ -246,8 +265,7 @@ def main() -> None:
                 names = [t.name for t in threading.enumerate()]
                 vision = "alive" if "vision-pipeline" in names else "DEAD"
                 print(
-                    f"[hb#{n}] vision={vision} frame_q={frame_queue.qsize()} "
-                    f"analysis_q={analysis_queue.qsize()} threads={names}",
+                    f"[hb#{n}] vision={vision} output_q={output_queue.qsize()} threads={names}",
                     flush=True, file=sys.stderr,
                 )
                 time.sleep(2)
@@ -258,18 +276,31 @@ def main() -> None:
     print("[main] heartbeat thread launched", flush=True)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
-    # Each iteration:
-    #   1. Drain latest raw frame (non-blocking) for VLM
-    #   2. Wait for next FrameAnalysis from vision pipeline
-    #   3. Every VLM_INTERVAL_SEC: fire assess_frame() in background thread
-    #   4. Call orchestrator.run_cycle() — agents run here
+    # Each iteration processes one (frame_bgr, FrameAnalysis) pair from output_queue.
+    #
+    # Always:   publish "frame" SSE event to dashboard
+    # Adaptive: call orchestrator only on trigger events (sparse mode) or every
+    #           dense_mode_interval_sec when rolling stats have been elevated for
+    #           dense_mode_window_sec (dense mode).
+    # VLM:      fire assess_frame() every VLM_INTERVAL_SEC in a background thread.
     # ─────────────────────────────────────────────────────────────────────────
 
-    latest_vlm: list = [None]          # holds latest VLMFrameAssessment or None
+    t_dense  = getattr(config.thresholds, "dense_mode_window_sec",   20.0)
+    t_interval = getattr(config.thresholds, "dense_mode_interval_sec", 2.0)
+    t_droopy = getattr(config.thresholds, "eye_openness_droopy",      0.45)
+    t_blink_high = getattr(config.thresholds, "blink_rate_high",      1.50)
+
+    latest_vlm: list = [None]
     vlm_thread: threading.Thread = None
-    last_vlm_time = 0.0
-    latest_frame_bgr = None
-    cycle_count = 0
+    last_vlm_time   = 0.0
+    last_orch_time  = 0.0
+    elevated_since  = None
+    cycle_count     = 0
+
+    try:
+        from api.events import publish as _publish_event
+    except ImportError:
+        _publish_event = None
 
     logger.info("SafeShift running. Ctrl-C to stop.")
     print("[main] entering main loop", flush=True)
@@ -277,58 +308,83 @@ def main() -> None:
     try:
         while not _shutdown.is_set():
 
-            # Drain latest raw frame for VLM (non-blocking — drop all but newest)
+            # Block until next (frame, analysis) pair arrives
             try:
-                latest_frame_bgr = frame_queue.get_nowait()
-            except queue.Empty:
-                pass
-
-            # Block until next FrameAnalysis arrives (timeout keeps shutdown snappy)
-            # KeyboardInterrupt (Ctrl-C) will interrupt this call on all platforms.
-            try:
-                frame_analysis = analysis_queue.get(timeout=1.0)
+                frame_bgr, frame_analysis = output_queue.get(timeout=1.0)
             except queue.Empty:
                 continue
 
             cycle_count += 1
-            logger.info("cycle %d — FrameAnalysis received  eye=%.3f blinks=%.1f yawn=%s gaze=%s",
-                        cycle_count, frame_analysis.eye_openness, frame_analysis.blink_rate,
-                        frame_analysis.yawn_detected, frame_analysis.gaze_direction)
-
             now = time.time()
 
-            # CALEB — vision/vlm_analyzer.py
-            # Fire assess_frame() every VLM_INTERVAL_SEC in a background thread.
-            # Result lands in latest_vlm[0] and is picked up by run_cycle() next cycle.
-            vlm_due = (now - last_vlm_time) >= VLM_INTERVAL_SEC
-            if vlm_due and latest_frame_bgr is not None:
+            # ── Always: publish live metrics to dashboard (Panel 1) ──────────
+            if _publish_event is not None:
+                try:
+                    _publish_event("frame", {
+                        "timestamp":      frame_analysis.timestamp,
+                        "driver_id":      frame_analysis.driver_id,
+                        "eye_openness":   frame_analysis.eye_openness,
+                        "blink_rate":     frame_analysis.blink_rate,
+                        "yawn_detected":  frame_analysis.yawn_detected,
+                        "gaze_direction": frame_analysis.gaze_direction,
+                    })
+                except Exception:
+                    pass
+
+            # ── VLM: fire every VLM_INTERVAL_SEC ────────────────────────────
+            if (now - last_vlm_time) >= VLM_INTERVAL_SEC:
                 if vlm_thread is None or not vlm_thread.is_alive():
                     latest_vlm = [None]
                     vlm_thread = threading.Thread(
                         target=_fire_vlm_async,
-                        args=(latest_frame_bgr, driver_id, now, shift_id, latest_vlm),
+                        args=(frame_bgr, driver_id, now, shift_id, latest_vlm),
                         name="vlm-assess",
                         daemon=True,
                     )
                     vlm_thread.start()
                     last_vlm_time = now
 
-            # KEVIN — agents/orchestrator.py
-            # run_cycle() does: build ShiftContext → Safety Agent ReAct loop →
-            # optionally Companion Agent → dispatch action handlers → log to memory
-            # → publish SSE events to frontend.
-            # vlm_assessment is None until the first VLM cycle completes (~10 s in).
-            try:
-                logger.info("cycle %d — calling orchestrator.run_cycle", cycle_count)
-                orchestrator.run_cycle(
-                    frame=frame_analysis,
-                    shift_id=shift_id,
-                    shift_start=shift_start,
-                    vlm_assessment=latest_vlm[0],
-                )
-                logger.info("cycle %d — run_cycle done", cycle_count)
-            except Exception as exc:
-                logger.error("orchestrator.run_cycle error: %s", exc, exc_info=True)
+            # ── Adaptive orchestrator dispatch ───────────────────────────────
+            stats_elevated = (
+                frame_analysis.blink_rate > t_blink_high * baseline.avg_blink_rate
+                or frame_analysis.eye_openness < t_droopy
+            )
+            if stats_elevated:
+                if elevated_since is None:
+                    elevated_since = now
+            else:
+                elevated_since = None
+
+            in_dense_mode = (
+                elevated_since is not None
+                and (now - elevated_since) >= t_dense
+            )
+            trigger_event = (
+                frame_analysis.yawn_detected
+                or frame_analysis.gaze_direction != "forward"
+                or frame_analysis.eye_openness < t_droopy
+            )
+            should_run = (
+                (in_dense_mode and (now - last_orch_time) >= t_interval)
+                or (not in_dense_mode and trigger_event)
+            )
+
+            if should_run:
+                mode_label = "dense" if in_dense_mode else "trigger"
+                logger.info("cycle %d — orchestrator (%s)  eye=%.3f blinks=%.1f yawn=%s gaze=%s",
+                            cycle_count, mode_label,
+                            frame_analysis.eye_openness, frame_analysis.blink_rate,
+                            frame_analysis.yawn_detected, frame_analysis.gaze_direction)
+                try:
+                    orchestrator.run_cycle(
+                        frame=frame_analysis,
+                        shift_id=shift_id,
+                        shift_start=shift_start,
+                        vlm_assessment=latest_vlm[0],
+                    )
+                    last_orch_time = now
+                except Exception as exc:
+                    logger.error("orchestrator.run_cycle error: %s", exc, exc_info=True)
 
     except KeyboardInterrupt:
         logger.info("Ctrl-C received — shutting down")

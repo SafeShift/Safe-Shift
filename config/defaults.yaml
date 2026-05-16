@@ -20,6 +20,8 @@ thresholds:
   ear_blink_threshold: 0.20   # EAR below this = blink / closed eye
   mar_yawn_threshold: 0.55    # MAR above this = mouth open enough for yawn timer to start
   gaze_offset_threshold: 0.15 # normalised nose offset from face centre; above = off-forward
+  dense_mode_window_sec: 20    # seconds of sustained elevation before switching to dense mode
+  dense_mode_interval_sec: 2   # orchestrator call interval (seconds) while in dense mode
 
 # Analysis window
 analysis_window_sec: 2         # how many seconds of frames to aggregate per FrameAnalysis
