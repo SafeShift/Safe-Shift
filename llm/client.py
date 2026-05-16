@@ -59,7 +59,7 @@ class NemotronClient:
         if enable_thinking:
             kwargs["extra_body"] = {
                 "chat_template_kwargs": {"enable_thinking": True},
-                "reasoning_budget": 16384,
+                "reasoning_budget": 4096,
             }
 
         response = self._client.chat.completions.create(**kwargs)
