@@ -1,10 +1,20 @@
 """Main per-cycle agent loop for SafeShift."""
 import logging
+import time
 
+from core.models import InterventionDecision
 from agents.context_builder import build_context
 from actions.logging_client import log_cycle
 
 logger = logging.getLogger(__name__)
+
+
+def _no_intervention() -> InterventionDecision:
+    return InterventionDecision(
+        should_intervene=False, severity="none", intervention_type="none",
+        trigger_companion=False, reason="Cooldown active", confidence=1.0,
+        timestamp=time.time(),
+    )
 
 
 class Orchestrator:
@@ -23,13 +33,27 @@ class Orchestrator:
         self._companion = companion_agent
         self._store     = store
         self._prior_companion_messages: list = []  # dedup across cycles
+        self._last_intervention_time: float = 0.0
+        self._last_intervention_severity: str = "none"
+        cooldown_min = getattr(config, "severity_escalation_minutes", 2)
+        self._cooldown_seconds: float = cooldown_min * 60
 
     def run_cycle(self, frame, shift_id: str, shift_start: float, vlm_assessment=None) -> None:
         # 1. assemble ShiftContext
         context = build_context(frame, shift_id, shift_start, self._store, self._config, vlm_assessment)
 
-        # 2. Safety Reasoning Agent — ReAct loop → InterventionDecision
-        decision = self._safety.run(context)
+        # 2. Safety Reasoning Agent — skip if within cooldown at same/higher severity
+        now = time.time()
+        secs_since_last = now - self._last_intervention_time
+        if secs_since_last < self._cooldown_seconds:
+            remaining = int(self._cooldown_seconds - secs_since_last)
+            logger.debug("Cooldown active — %ds remaining, skipping safety agent", remaining)
+            decision = _no_intervention()
+        else:
+            decision = self._safety.run(context)
+            if decision.should_intervene and decision.severity != "none":
+                self._last_intervention_time = now
+                self._last_intervention_severity = decision.severity
 
         # 3. Companion Agent — fires independently when triggered
         companion_message = None

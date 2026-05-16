@@ -38,12 +38,16 @@ def send_push(title: str, message: str, priority: str = "high") -> bool:
     from config.settings import load_config
     _cfg = load_config()
 
-    url = f"{_cfg.notifications.ntfy_server}/{_cfg.notifications.ntfy_topic}"
+    _priority_map = {"low": 2, "default": 3, "high": 4, "urgent": 5}
     try:
         resp = requests.post(
-            url,
-            data=message.encode(),
-            headers={"Title": title, "Priority": priority},
+            _cfg.notifications.ntfy_server,
+            json={
+                "topic":    _cfg.notifications.ntfy_topic,
+                "title":    title,
+                "message":  message,
+                "priority": _priority_map.get(priority, 4),
+            },
             timeout=5,
         )
         return resp.status_code == 200

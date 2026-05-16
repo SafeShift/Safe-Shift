@@ -151,24 +151,28 @@ def handle_get_recent_interventions(shift_id: str, last_n_minutes: int = 30, **_
 def handle_trigger_alert(severity: str, reason: str, driver_id: str = "", shift_id: str = "", **_) -> dict:
     from core.models import InterventionDecision
     from actions.alert import execute
+    from memory.shift_history import append_intervention
     import time
     decision = InterventionDecision(
         should_intervene=True, severity=severity, intervention_type="alert",
         trigger_companion=False, reason=reason, confidence=1.0, timestamp=time.time(),
     )
     record = execute(decision, driver_id, shift_id)
+    append_intervention(record)
     return {"status": "alert_fired", "severity": severity, "intervention_id": record.intervention_id}
 
 
 def handle_trigger_rest_break(severity: str, reason: str, suggested_minutes: int = 15, driver_id: str = "", shift_id: str = "", **_) -> dict:
     from core.models import InterventionDecision
     from actions.rest_break import execute
+    from memory.shift_history import append_intervention
     import time
     decision = InterventionDecision(
         should_intervene=True, severity=severity, intervention_type="rest_break",
         trigger_companion=False, reason=reason, confidence=1.0, timestamp=time.time(),
     )
     record = execute(decision, driver_id, shift_id)
+    append_intervention(record)
     return {"status": "rest_break_recommended", "stops": record.suggested_stops, "intervention_id": record.intervention_id}
 
 

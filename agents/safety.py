@@ -39,7 +39,7 @@ class SafetyAgent:
                 model=self._model,
                 messages=messages,
                 tools=TOOLS,
-                enable_thinking=True,
+                enable_thinking=False,
             )
 
             if response.get("thinking"):

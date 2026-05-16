@@ -56,11 +56,11 @@ class NemotronClient:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        kwargs["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": enable_thinking},
+        }
         if enable_thinking:
-            kwargs["extra_body"] = {
-                "chat_template_kwargs": {"enable_thinking": True},
-                "reasoning_budget": 4096,
-            }
+            kwargs["extra_body"]["reasoning_budget"] = 4096
 
         response = self._client.chat.completions.create(**kwargs)
         message = response.choices[0].message
