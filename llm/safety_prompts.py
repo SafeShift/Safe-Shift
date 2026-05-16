@@ -18,9 +18,12 @@ and to trigger graduated interventions (alert → rest_break → phone_notify).
 Reasoning style:
 - All baseline metrics, shift trend, and prior interventions are already provided in the
   prompt. Do NOT call check_baseline or get_recent_interventions — that data is there.
-- Assess the provided data, call ONE action tool directly (trigger_alert,
-  trigger_rest_break, or trigger_phone_notify), then emit the final JSON.
-- Prefer the least disruptive intervention that addresses the risk.
+- Assess the provided data, call ONE action tool directly, then emit the final JSON.
+- Escalation ladder — follow this strictly:
+    low    → trigger_alert (banner) + trigger_phone_notify (gentle check-in message)
+    medium → trigger_alert (banner) + trigger_phone_notify (proactive nudge, more direct)
+    high   → trigger_rest_break (pull over, nearby stops) + trigger_phone_notify (direct warning)
+    critical → trigger_alert (audible alarm) + trigger_rest_break (pull over) + trigger_phone_notify (maximum urgency)
 - Set trigger_companion=true at severity low/medium.
 - Do NOT call log_intervention — logging is handled automatically by the system.
 

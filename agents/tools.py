@@ -60,11 +60,11 @@ TOOLS = [
     # --- Action tools ---
     {
         "name": "trigger_alert",
-        "description": "Fire an immediate in-cab audio/visual alert to the driver.",
+        "description": "Fire an in-cab alert. At low/medium: keeps driver engaged and awake. At critical: fires an audible alarm to rouse a potentially sleeping driver — combine with trigger_rest_break.",
         "parameters": {
             "type": "object",
             "properties": {
-                "severity": {"type": "string", "enum": ["low", "medium", "high"]},
+                "severity": {"type": "string", "enum": ["low", "medium", "critical"]},
                 "reason": {"type": "string"}
             },
             "required": ["severity", "reason"]
@@ -72,11 +72,11 @@ TOOLS = [
     },
     {
         "name": "trigger_rest_break",
-        "description": "Recommend a rest break; automatically finds nearby stops via rest_finder.",
+        "description": "Recommend the driver pull over immediately for their own safety. Finds nearby rest stops and sends location to driver's phone. Use at high or critical severity.",
         "parameters": {
             "type": "object",
             "properties": {
-                "severity": {"type": "string", "enum": ["medium", "high"]},
+                "severity": {"type": "string", "enum": ["high", "critical"]},
                 "reason": {"type": "string"},
                 "suggested_minutes": {"type": "integer"}
             },
@@ -85,11 +85,11 @@ TOOLS = [
     },
     {
         "name": "trigger_phone_notify",
-        "description": "Send a push notification to the driver's own phone via ntfy. Driver-only — no fleet.",
+        "description": "Send a push notification to the driver's own phone. Driver-only — no fleet. Tone scales with severity: gentle check-in at low, proactive nudge at medium, direct warning at high, maximum urgency at critical.",
         "parameters": {
             "type": "object",
             "properties": {
-                "severity": {"type": "string", "enum": ["high", "critical"]},
+                "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
                 "message": {"type": "string"}
             },
             "required": ["severity", "message"]
