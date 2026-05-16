@@ -289,7 +289,7 @@ def main() -> None:
     t_interval   = getattr(config.thresholds, "dense_mode_interval_sec", 2.0)
     t_droopy     = getattr(config.thresholds, "eye_openness_droopy",      0.45)
     t_blink_high = getattr(config.thresholds, "blink_rate_high",          1.50)
-    MIN_TRIGGER_SEC = 5.0  # minimum seconds between trigger-mode orchestrator calls
+    MIN_TRIGGER_SEC = 3.0  # minimum seconds between trigger-mode orchestrator calls
 
     latest_vlm: list = [None]
     vlm_thread: threading.Thread = None

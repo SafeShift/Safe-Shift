@@ -42,12 +42,17 @@ class Orchestrator:
         # 1. assemble ShiftContext
         context = build_context(frame, shift_id, shift_start, self._store, self._config, vlm_assessment)
 
-        # 2. Safety Reasoning Agent — skip if within cooldown at same/higher severity
+        # 2. Safety Reasoning Agent — skip if within cooldown, unless conditions are critical
         now = time.time()
         secs_since_last = now - self._last_intervention_time
-        if secs_since_last < self._cooldown_seconds:
-            remaining = int(self._cooldown_seconds - secs_since_last)
-            logger.debug("Cooldown active — %ds remaining, skipping safety agent", remaining)
+        # Override cooldown if eyes are nearly closed or eyes+yawn both dangerously low
+        conditions_critical = (
+            frame.eye_openness < 0.20
+            or (frame.eye_openness < 0.30 and frame.yawn_detected)
+        )
+        within_cooldown = (secs_since_last < self._cooldown_seconds) and not conditions_critical
+        if within_cooldown:
+            logger.debug("Cooldown active — %ds remaining", int(self._cooldown_seconds - secs_since_last))
             decision = _no_intervention()
         else:
             decision = self._safety.run(context)
