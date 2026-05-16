@@ -2,16 +2,21 @@
 import datetime
 
 from core.models import DriverBaseline
+from memory.store import MemoryStore
+from config.settings import config as _config
+
+_store = MemoryStore(_config)
 
 
-def update_baseline_from_shift(shift_id: str, driver_id: str, store, config) -> None:
-    """Recalculate driver's rolling baseline from this shift's frames and save."""
+def update_baseline_from_shift(shift_id: str, driver_id: str, store=None, config=None) -> None:
+    store = store or _store
+    config = config or _config
     from memory.shift_history import get_all_frames
-    frames = get_all_frames(shift_id, store)
+    frames = get_all_frames(shift_id)
     if not frames:
         return
 
-    existing = get_baseline(driver_id, store, config)
+    existing = get_baseline(driver_id)
     n = len(frames)
 
     new_baseline = DriverBaseline(
@@ -22,10 +27,12 @@ def update_baseline_from_shift(shift_id: str, driver_id: str, store, config) -> 
         shift_count=existing.shift_count + 1,
         last_updated=datetime.datetime.utcnow().isoformat(),
     )
-    save_baseline(new_baseline, store)
+    save_baseline(new_baseline)
 
 
-def get_baseline(driver_id: str, store, config) -> DriverBaseline:
+def get_baseline(driver_id: str, store=None, config=None) -> DriverBaseline:
+    store = store or _store
+    config = config or _config
     with store.get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM baselines WHERE driver_id = ?", (driver_id,)
@@ -51,7 +58,8 @@ def get_baseline(driver_id: str, store, config) -> DriverBaseline:
     )
 
 
-def save_baseline(baseline: DriverBaseline, store) -> None:
+def save_baseline(baseline: DriverBaseline, store=None) -> None:
+    store = store or _store
     with store.get_connection() as conn:
         conn.execute("""
             INSERT INTO baselines (driver_id, avg_blink_rate, avg_eye_openness,
