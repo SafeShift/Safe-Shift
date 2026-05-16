@@ -26,4 +26,62 @@ def build_context(frame, shift_id: str, shift_start: float, vlm_assessment=None)
     Returns:
         ShiftContext
     """
-    raise NotImplementedError
+    import time
+    from core.models import ShiftContext, ShiftTrend
+    from memory.driver_baseline import get_baseline
+    from memory.shift_history import get_recent_frames, get_all_frames, get_interventions
+
+    shift_elapsed_minutes = (time.time() - shift_start) / 60
+    baseline = get_baseline(frame.driver_id)
+    recent_window = get_recent_frames(shift_id, minutes=10)
+    prior_interventions = get_interventions(shift_id)
+    all_frames = get_all_frames(shift_id)
+
+    trend = _compute_shift_trend(shift_id, all_frames, bucket_minutes=5.0)
+
+    return ShiftContext(
+        driver_id=frame.driver_id,
+        shift_id=shift_id,
+        shift_elapsed_minutes=shift_elapsed_minutes,
+        current_analysis=frame,
+        shift_trend=trend,
+        baseline=baseline,
+        recent_window=recent_window,
+        prior_interventions=prior_interventions,
+        vlm_assessment=vlm_assessment,
+    )
+
+
+def _compute_shift_trend(shift_id: str, all_frames: list, bucket_minutes: float = 5.0) -> "ShiftTrend":
+    """Bucket all shift frames into time windows and compute per-bucket averages."""
+    from core.models import ShiftTrend
+
+    if not all_frames:
+        return ShiftTrend(shift_id=shift_id, trend_bucket_minutes=bucket_minutes)
+
+    bucket_seconds = bucket_minutes * 60
+    shift_start_ts = all_frames[0].timestamp
+    yawn_total = sum(1 for f in all_frames if f.yawn_detected)
+
+    # group frames into buckets by elapsed time
+    buckets: dict = {}
+    for f in all_frames:
+        idx = int((f.timestamp - shift_start_ts) / bucket_seconds)
+        buckets.setdefault(idx, []).append(f)
+
+    avg_eye = []
+    avg_blink = []
+    for idx in sorted(buckets):
+        bucket = buckets[idx]
+        avg_eye.append(round(sum(f.eye_openness for f in bucket) / len(bucket), 3))
+        avg_blink.append(round(sum(f.blink_rate for f in bucket) / len(bucket), 1))
+
+    return ShiftTrend(
+        shift_id=shift_id,
+        trend_bucket_minutes=bucket_minutes,
+        sample_count=len(all_frames),
+        yawn_count_total=yawn_total,
+        intervention_count=0,  # orchestrator updates this after each intervention
+        avg_eye_openness_trend=avg_eye,
+        avg_blink_rate_trend=avg_blink,
+    )

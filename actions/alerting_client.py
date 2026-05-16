@@ -17,4 +17,22 @@ def send_alert(severity: str, message: str) -> bool:
     Returns:
         True if delivered successfully
     """
-    raise NotImplementedError
+    import subprocess
+    import sys
+
+    # terminal bell — audible in any terminal
+    sys.stdout.write("\a")
+    sys.stdout.flush()
+
+    # macOS OS notification — visible on screen during demo
+    title = f"SafeShift Alert [{severity.upper()}]"
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             f'display notification "{message}" with title "{title}"'],
+            check=True, capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass  # non-macOS or osascript unavailable — bell still fired
+
+    return True
