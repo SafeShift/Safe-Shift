@@ -10,7 +10,7 @@ from agents.tools import TOOLS, TOOL_HANDLERS
 
 logger = logging.getLogger(__name__)
 
-MAX_REACT_STEPS = 8  # max tool calls before forcing a decision
+MAX_REACT_STEPS = 4  # max tool calls before forcing a decision
 
 
 class SafetyAgent:
