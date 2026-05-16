@@ -83,8 +83,10 @@ try:
     import uvicorn
     from api.server import app as fastapi_app
     _HAS_API = True
-except ImportError:
+except Exception as _api_import_err:
     _HAS_API = False
+    import logging as _log
+    _log.getLogger("main").warning("api/server.py import failed: %s", _api_import_err)
 
 from vision.pipeline import VisionPipeline
 
@@ -141,7 +143,14 @@ def _start_api_server(config) -> None:
     host = getattr(config, "api_host", "0.0.0.0")
     port = getattr(config, "api_port", 8080)
     def _run():
-        uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
+        import asyncio
+        try:
+            cfg = uvicorn.Config(fastapi_app, host=host, port=port, log_level="warning")
+            server = uvicorn.Server(cfg)
+            server.install_signal_handlers = lambda: None  # can't install in non-main thread
+            asyncio.run(server.serve())
+        except Exception as exc:
+            logger.error("API server thread crashed: %s", exc, exc_info=True)
     t = threading.Thread(target=_run, name="api-server", daemon=True)
     t.start()
     logger.info("API server started on %s:%d", host, port)
