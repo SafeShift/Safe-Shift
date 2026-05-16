@@ -6,6 +6,27 @@ from core.models import DriverBaseline
 from memory.store import get_connection
 
 
+def update_baseline_from_shift(shift_id: str, driver_id: str) -> None:
+    """Recalculate driver's rolling baseline from this shift's frames and save."""
+    from memory.shift_history import get_all_frames
+    frames = get_all_frames(shift_id)
+    if not frames:
+        return
+
+    existing = get_baseline(driver_id)
+    n = len(frames)
+
+    new_baseline = DriverBaseline(
+        driver_id=driver_id,
+        avg_blink_rate=round(sum(f.blink_rate for f in frames) / n, 2),
+        avg_eye_openness=round(sum(f.eye_openness for f in frames) / n, 3),
+        avg_yawn_frequency=round(sum(f.yawn_frequency for f in frames) / n, 2),
+        shift_count=existing.shift_count + 1,
+        last_updated=datetime.datetime.utcnow().isoformat(),
+    )
+    save_baseline(new_baseline)
+
+
 def get_baseline(driver_id: str) -> DriverBaseline:
     with get_connection() as conn:
         row = conn.execute(
