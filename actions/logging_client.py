@@ -9,7 +9,7 @@ Imports from: config.settings (LOG_FILE_PATH)
 """
 
 
-def log_cycle(frame, decision, companion_message=None) -> None:
+def log_cycle(frame, decision, companion_message=None, log_path: str = "./safeshift_session.log") -> None:
     """Append one cycle's data to the local session log.
 
     Args:
@@ -18,10 +18,7 @@ def log_cycle(frame, decision, companion_message=None) -> None:
         companion_message: CompanionMessage if companion fired this cycle, else None
     """
     import json
-    import os
     from datetime import datetime
-
-    log_path = os.getenv("LOG_FILE_PATH", "./safeshift_session.log")
 
     entry = {
         "ts": datetime.utcnow().isoformat(),

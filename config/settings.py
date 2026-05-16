@@ -28,19 +28,25 @@ def load_config(path=None):
         "nemotron_companion_model": os.getenv("NEMOTRON_COMPANION_MODEL", "nvidia/nemotron-3-super-120b-a12b"),
         "nemotron_vlm_model": os.getenv("NEMOTRON_VLM_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
     }
+    driver_profile = data.get("driver_profile", {})
+    demo = data.get("demo", {})
+    vision_yaml = data.get("vision", {})
+
     data["driver"] = {
-        "driver_id": os.getenv("DRIVER_ID", "driver_001"),
+        # driver_id is int in yaml (0, 1, …); cast to str to match model type annotations
+        "driver_id": str(driver_profile.get("driver_id", 0)),
+        "driver_name": driver_profile.get("driver_name", "Driver"),
+        # DB path stays env-overrideable — path differs per machine (WSL vs Windows)
         "db_path": os.getenv("DB_PATH", "./safeshift.db"),
-        "camera_index": int(os.getenv("CAMERA_INDEX", "0")),
-        "demo_lat": float(os.getenv("DEMO_LAT", "36.9916")),
-        "demo_lon": float(os.getenv("DEMO_LON", "-122.0583")),
+        "demo_lat": demo.get("demo_lat", 36.9916),
+        "demo_lon": demo.get("demo_lon", -122.0583),
     }
     data["vision"] = {
-        "flmk_model_path": data.get("vision", {}).get("flmk_model_path", "vision/models/face_landmarker.task"),
-        "media_source": os.getenv("MEDIA_SOURCE", "camera"),
-        "camera_index": int(os.getenv("CAMERA_INDEX", "0")),
-        "image_dir": os.getenv("IMAGE_DIR", ""),
-        "target_fps": int(os.getenv("TARGET_FPS", "15")),
+        "flmk_model_path": vision_yaml.get("flmk_model_path", "vision/models/face_landmarker.task"),
+        "media_source":    vision_yaml.get("media_source", "camera"),
+        "camera_index":    int(vision_yaml.get("camera_index", 0)),
+        "image_dir":       vision_yaml.get("image_dir", ""),
+        "target_fps":      int(vision_yaml.get("target_fps", 15)),
     }
     data["notifications"] = {
         "ntfy_topic": os.getenv("NTFY_TOPIC", "safeshift-alerts"),
@@ -49,5 +55,3 @@ def load_config(path=None):
     }
 
     return _to_namespace(data)
-
-config = load_config()

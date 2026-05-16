@@ -22,6 +22,10 @@ import time
 import uuid
 
 from config.settings import load_config
+from memory.store import MemoryStore
+from llm.client import NemotronClient
+from agents.safety import SafetyAgent
+from agents.orchestrator import Orchestrator
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Optional imports — stubs keep main.py runnable before teammates finish
@@ -36,16 +40,15 @@ try:
 except ImportError:
     def start_audit_recorder(): pass
 
-# KEVIN — implement agents/orchestrator.py
-# run_cycle() receives one FrameAnalysis + optional VLMFrameAssessment per cycle.
-# It builds ShiftContext, runs Safety Agent, optionally fires Companion Agent,
-# dispatches action handlers, logs to memory, and publishes SSE events.
-# Signature: run_cycle(frame, shift_id, shift_start, vlm_assessment=None) -> None
+# EMILIO — implement agents/companion.py
+# CompanionAgent(config, client) — Emilio's persona agent.
+# generate(context, prior_messages, severity) -> CompanionMessage
 try:
-    from agents.orchestrator import run_cycle
+    from agents.companion import CompanionAgent
 except ImportError:
-    def run_cycle(frame, shift_id, shift_start, vlm_assessment=None):
-        logging.debug("orchestrator stub — frame ts=%.3f", frame.timestamp)
+    class CompanionAgent:
+        def __init__(self, config, client): pass
+        def generate(self, context, prior_messages, severity): return None
 
 # CALEB — implement vision/vlm_analyzer.py
 # assess_frame() sends a BGR frame to Nemotron-3-Nano-Omi VLM and returns
@@ -58,22 +61,20 @@ except ImportError:
 
 # KEVIN — implement memory/shift_history.py
 # init_shift() creates the shift row in SQLite so append_frame() calls succeed.
-# Signature: init_shift(shift_id, driver_id) -> None
+# Signature: init_shift(shift_id, driver_id, store) -> None
 try:
-    from memory.store import init_db
     from memory.shift_history import init_shift
 except ImportError:
-    def init_db(): pass
-    def init_shift(shift_id, driver_id): pass
+    def init_shift(shift_id, driver_id, store): pass
 
-# KEVIN — implement memory/driver_baseline.py
+# KEVIN — implement memory/driver_baseline.py (already done)
 # update_baseline_from_shift() reads this shift's FrameAnalysis rows and
 # recalculates the rolling per-driver average, then persists it.
-# Signature: update_baseline_from_shift(shift_id, driver_id) -> None
+# Signature: update_baseline_from_shift(shift_id, driver_id, store, config) -> None
 try:
     from memory.driver_baseline import update_baseline_from_shift
 except ImportError:
-    def update_baseline_from_shift(shift_id, driver_id): pass
+    def update_baseline_from_shift(shift_id, driver_id, store, config): pass
 
 # JOSH — implement api/server.py
 # FastAPI app exposing GET / (frontend), GET /stream (SSE), GET /state.
@@ -102,7 +103,7 @@ VLM_INTERVAL_SEC = 10.0
 # Shift lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
 
-def start_shift(driver_id: str) -> tuple:
+def start_shift(driver_id: str, store) -> tuple:
     """Generate shift_id + shift_start; create memory row.
 
     Returns:
@@ -110,16 +111,16 @@ def start_shift(driver_id: str) -> tuple:
     """
     shift_id = str(uuid.uuid4())
     shift_start = time.time()
-    init_shift(shift_id, driver_id)
+    init_shift(shift_id, driver_id, store)
     logger.info("Shift started  driver=%s  shift_id=%s", driver_id, shift_id)
     return shift_id, shift_start
 
 
-def end_shift(shift_id: str, driver_id: str) -> None:
+def end_shift(shift_id: str, driver_id: str, store, config) -> None:
     """Update DriverBaseline from this shift's data and close out."""
     logger.info("Shift ending   driver=%s  shift_id=%s", driver_id, shift_id)
     try:
-        update_baseline_from_shift(shift_id, driver_id)
+        update_baseline_from_shift(shift_id, driver_id, store, config)
     except Exception as exc:
         logger.error("end_shift: baseline update failed: %s", exc)
     logger.info("Shift ended.")
@@ -184,17 +185,21 @@ def _fire_vlm_async(frame_bgr, driver_id: str, timestamp: float,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    config = load_config()
+    config    = load_config()
     driver_id = config.driver.driver_id
 
-    # KEVIN — memory/store.py: creates SQLite tables if they don't exist yet
-    init_db()
+    # ── Construct all agents/services with injected config ────────────────────
+    store        = MemoryStore(config)
+    client       = NemotronClient(config)
+    safety       = SafetyAgent(config, client)
+    companion    = CompanionAgent(config, client)
+    orchestrator = Orchestrator(config, safety, companion, store)
 
     # KEVIN — core/audit.py: starts background JSONL writer + NemoClaw tail thread
     start_audit_recorder()
 
     # KEVIN — memory/shift_history.py: creates shift row; returns shift_id + shift_start
-    shift_id, shift_start = start_shift(driver_id)
+    shift_id, shift_start = start_shift(driver_id, store)
 
     # JOSH — api/server.py: FastAPI server for frontend SSE stream
     _start_api_server(config)
@@ -267,7 +272,7 @@ def main() -> None:
             # → publish SSE events to frontend.
             # vlm_assessment is None until the first VLM cycle completes (~10 s in).
             try:
-                run_cycle(
+                orchestrator.run_cycle(
                     frame=frame_analysis,
                     shift_id=shift_id,
                     shift_start=shift_start,
@@ -279,7 +284,7 @@ def main() -> None:
     finally:
         # KEVIN — memory/driver_baseline.py
         # Recalculates per-driver rolling average from this shift and persists it.
-        end_shift(shift_id, driver_id)
+        end_shift(shift_id, driver_id, store, config)
         logger.info("Goodbye.")
 
 

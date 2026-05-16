@@ -1,19 +1,17 @@
 """Read and write DriverBaseline records; updates rolling averages after each shift."""
 import datetime
 
-from config.settings import config
 from core.models import DriverBaseline
-from memory.store import get_connection
 
 
-def update_baseline_from_shift(shift_id: str, driver_id: str) -> None:
+def update_baseline_from_shift(shift_id: str, driver_id: str, store, config) -> None:
     """Recalculate driver's rolling baseline from this shift's frames and save."""
     from memory.shift_history import get_all_frames
-    frames = get_all_frames(shift_id)
+    frames = get_all_frames(shift_id, store)
     if not frames:
         return
 
-    existing = get_baseline(driver_id)
+    existing = get_baseline(driver_id, store, config)
     n = len(frames)
 
     new_baseline = DriverBaseline(
@@ -24,11 +22,11 @@ def update_baseline_from_shift(shift_id: str, driver_id: str) -> None:
         shift_count=existing.shift_count + 1,
         last_updated=datetime.datetime.utcnow().isoformat(),
     )
-    save_baseline(new_baseline)
+    save_baseline(new_baseline, store)
 
 
-def get_baseline(driver_id: str) -> DriverBaseline:
-    with get_connection() as conn:
+def get_baseline(driver_id: str, store, config) -> DriverBaseline:
+    with store.get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM baselines WHERE driver_id = ?", (driver_id,)
         ).fetchone()
@@ -53,18 +51,18 @@ def get_baseline(driver_id: str) -> DriverBaseline:
     )
 
 
-def save_baseline(baseline: DriverBaseline) -> None:
-    with get_connection() as conn:
+def save_baseline(baseline: DriverBaseline, store) -> None:
+    with store.get_connection() as conn:
         conn.execute("""
             INSERT INTO baselines (driver_id, avg_blink_rate, avg_eye_openness,
                                    avg_yawn_frequency, shift_count, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(driver_id) DO UPDATE SET
-                avg_blink_rate   = excluded.avg_blink_rate,
-                avg_eye_openness = excluded.avg_eye_openness,
+                avg_blink_rate     = excluded.avg_blink_rate,
+                avg_eye_openness   = excluded.avg_eye_openness,
                 avg_yawn_frequency = excluded.avg_yawn_frequency,
-                shift_count      = excluded.shift_count,
-                last_updated     = excluded.last_updated
+                shift_count        = excluded.shift_count,
+                last_updated       = excluded.last_updated
         """, (
             baseline.driver_id,
             baseline.avg_blink_rate,
