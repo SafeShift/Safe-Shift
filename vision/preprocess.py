@@ -6,7 +6,6 @@ def preprocess(frame):
     """
     Preprocess raw BGR frame for landmark detection.
     """
-    # flip vertically
-    frame = cv2.flip(frame, 0)
-    # convert to mediapipe Image format (RGB)
-    return mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+    frame = cv2.flip(frame, 1)  # horizontal flip (mirror)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
