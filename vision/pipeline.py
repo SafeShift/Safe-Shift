@@ -5,6 +5,11 @@ import time
 
 from vision.capture import MediaCapture
 
+class FrameAnalysis:
+    def __init__(self, timestamp, driver_id, features):
+        self.timestamp = timestamp
+        self.driver_id = driver_id
+        self.
 
 class VisionPipeline:
     def __init__(self, config):

@@ -20,3 +20,6 @@ recent_window_minutes: 10      # how many minutes of FrameAnalysis to include in
 
 # Intervention severity escalation
 severity_escalation_minutes: 5 # if same severity recurs within this window, escalate one level
+
+vision:
+  flmk_model_path: "vision/models/face_landmarker.task"
