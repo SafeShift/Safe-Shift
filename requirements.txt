@@ -5,6 +5,10 @@ mediapipe>=0.10
 # HTTP / API clients
 requests>=2.31
 httpx>=0.27          # async-capable alternative if needed
+openai>=1.0          # OpenAI-compatible client for NVIDIA Nemotron endpoints
+
+# TTS
+edge-tts>=6.1        # natural-sounding TTS for companion agent audio output
 
 # Config & environment
 python-dotenv>=1.0
