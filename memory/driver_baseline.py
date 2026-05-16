@@ -12,7 +12,7 @@ def update_baseline_from_shift(shift_id: str, driver_id: str, store=None, config
     store = store or _store
     config = config or _config
     from memory.shift_history import get_all_frames
-    frames = get_all_frames(shift_id)
+    frames = get_all_frames(shift_id, store)
     if not frames:
         return
 

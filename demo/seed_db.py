@@ -12,11 +12,13 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from memory.store import init_db
-from memory.driver_baseline import save_baseline
+import os
+import sqlite3
+import datetime
 from core.models import DriverBaseline
 
-DRIVER_ID = "Trucker Tom"
+# Must match driver_profile.driver_id in config/defaults.yaml (cast to str)
+DRIVER_ID = "0"
 
 # Realistic baseline for an experienced long-haul driver across 8 prior shifts
 BASELINE = DriverBaseline(
@@ -30,10 +32,28 @@ BASELINE = DriverBaseline(
 
 
 def main():
-    print("Initialising database...")
-    init_db()
-    print(f"Seeding baseline for '{DRIVER_ID}'...")
-    save_baseline(BASELINE)
+    db_path = os.getenv("DB_PATH", "./safeshift.db")
+    print(f"Initialising database at {db_path}...")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS baselines (
+            driver_id TEXT PRIMARY KEY,
+            avg_blink_rate REAL, avg_eye_openness REAL,
+            avg_yawn_frequency REAL, shift_count INTEGER, last_updated TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT INTO baselines VALUES (?,?,?,?,?,?)
+        ON CONFLICT(driver_id) DO UPDATE SET
+            avg_blink_rate=excluded.avg_blink_rate,
+            avg_eye_openness=excluded.avg_eye_openness,
+            avg_yawn_frequency=excluded.avg_yawn_frequency,
+            shift_count=excluded.shift_count,
+            last_updated=excluded.last_updated
+    """, (BASELINE.driver_id, BASELINE.avg_blink_rate, BASELINE.avg_eye_openness,
+          BASELINE.avg_yawn_frequency, BASELINE.shift_count, BASELINE.last_updated))
+    conn.commit()
+    conn.close()
     print(f"Done. Trucker Tom has {BASELINE.shift_count} shifts on record.")
     print(f"  avg_blink_rate   : {BASELINE.avg_blink_rate}")
     print(f"  avg_eye_openness : {BASELINE.avg_eye_openness}")
