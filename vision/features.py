@@ -124,7 +124,7 @@ def _mar(lm, indices: dict) -> float:
     return (v1 + v2 + v3) / (3.0 * horiz)
 
 
-def _gaze(lm):
+def _gaze(lm, threshold: float):
     """Compute head gaze direction from the face orientation vector.
 
     Uses the nose tip offset relative to the geometric centre of the face
@@ -153,7 +153,7 @@ def _gaze(lm):
 
     offset = math.hypot(dx, dy)
 
-    if offset < GAZE_OFFSET_THRESHOLD:
+    if offset < threshold:
         direction = "forward"
     elif abs(dx) >= abs(dy):
         direction = "right" if dx > 0 else "left"
@@ -177,13 +177,15 @@ class FaceFeatureExtractor:
 
     def __init__(
         self,
-        ear_blink_threshold: float = EAR_BLINK_THRESHOLD,
-        mar_yawn_threshold:  float = MAR_YAWN_THRESHOLD,
-        yawn_open_sec:       float = 2.0,
+        ear_blink_threshold:   float = EAR_BLINK_THRESHOLD,
+        mar_yawn_threshold:    float = MAR_YAWN_THRESHOLD,
+        gaze_offset_threshold: float = GAZE_OFFSET_THRESHOLD,
+        yawn_open_sec:         float = 2.0,
     ):
-        self.ear_blink_threshold = ear_blink_threshold
-        self.mar_yawn_threshold  = mar_yawn_threshold
-        self.yawn_open_sec       = yawn_open_sec
+        self.ear_blink_threshold   = ear_blink_threshold
+        self.mar_yawn_threshold    = mar_yawn_threshold
+        self.gaze_offset_threshold = gaze_offset_threshold
+        self.yawn_open_sec         = yawn_open_sec
         self._mouth_open_since: Optional[float] = None   # timestamp when mouth opened
         self._yawn_active: bool = False                   # True once threshold met; stays until mouth closes
 
@@ -224,7 +226,7 @@ class FaceFeatureExtractor:
                 self._mouth_open_since = None
             yawn_detected = self._yawn_active
 
-        direction, offset = _gaze(lm)
+        direction, offset = _gaze(lm, self.gaze_offset_threshold)
 
         return FrameFeatures(
             eye_openness   = avg_ear,
