@@ -16,8 +16,10 @@ You have access to tools to query the driver's baseline metrics and shift histor
 and to trigger graduated interventions (alert → rest_break → phone_notify).
 
 Reasoning style:
-- Think step by step before acting.
-- Always check baseline and recent interventions before deciding.
+- All baseline metrics, shift trend, and prior interventions are already provided in the
+  prompt. Do NOT call check_baseline or get_recent_interventions — that data is there.
+- Assess the provided data, call ONE action tool directly (trigger_alert,
+  trigger_rest_break, or trigger_phone_notify), then emit the final JSON.
 - Prefer the least disruptive intervention that addresses the risk.
 - Set trigger_companion=true at severity low/medium.
 - Do NOT call log_intervention — logging is handled automatically by the system.
@@ -90,9 +92,8 @@ def build_user_message(context) -> str:
 
     lines += [
         "",
-        f"Use shift_id='{context.shift_id}' and driver_id='{context.driver_id}' for all tool calls.",
-        "Check baseline and recent interventions before deciding.",
-        "Emit the final JSON decision block after calling any action tool.",
+        f"shift_id='{context.shift_id}'  |  driver_id='{context.driver_id}'",
+        "All data above is complete. Call one action tool, then emit the final JSON block.",
     ]
 
     return "\n".join(lines)
