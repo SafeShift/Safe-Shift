@@ -11,6 +11,7 @@ from agents.tools import TOOLS, TOOL_HANDLERS
 logger = logging.getLogger(__name__)
 
 MAX_REACT_STEPS = 4  # max tool calls before forcing a decision
+_ACTION_TOOLS = {"trigger_alert", "trigger_rest_break", "trigger_phone_notify"}
 
 
 class SafetyAgent:
@@ -64,6 +65,7 @@ class SafetyAgent:
             })
 
             # execute each tool and feed results back
+            action_fired = False
             for tc in response["tool_calls"]:
                 handler = TOOL_HANDLERS.get(tc["name"])
                 if handler is None:
@@ -82,6 +84,11 @@ class SafetyAgent:
                     "tool_call_id": tc["id"],
                     "content": json.dumps(result),
                 })
+                if tc["name"] in _ACTION_TOOLS:
+                    action_fired = True
+
+            if action_fired:
+                break  # action already fired — skip remaining steps, go straight to final JSON
 
         # hit max steps — force a final completion with no tools
         final = self._client.complete_with_tools(
