@@ -13,7 +13,7 @@ def get_connection():
     return _store.get_connection()
 
 
-def init_shift(shift_id: str, driver_id: str) -> None:
+def init_shift(shift_id: str, driver_id: str, store=None) -> None:
     """No-op for SQLite — tables already exist. Called by main.py at shift start."""
     pass
 

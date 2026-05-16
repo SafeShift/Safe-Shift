@@ -55,3 +55,6 @@ def load_config(path=None):
     }
 
     return _to_namespace(data)
+
+
+config = load_config()
