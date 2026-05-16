@@ -111,31 +111,114 @@ TOOLS = [
 ]
 
 
-# --- Tool handler bindings (called by OpenClaw, not orchestrator) ---
+# --- Tool handler bindings ---
 
-def handle_check_baseline(driver_id: str) -> dict:
-    raise NotImplementedError
-
-
-def handle_get_shift_trend(shift_id: str) -> dict:
-    raise NotImplementedError
-
-
-def handle_get_recent_interventions(shift_id: str, last_n_minutes: int = 30) -> dict:
-    raise NotImplementedError
-
-
-def handle_trigger_alert(severity: str, reason: str) -> dict:
-    raise NotImplementedError
+def handle_check_baseline(driver_id: str, **_) -> dict:
+    from memory.driver_baseline import get_baseline
+    b = get_baseline(driver_id)
+    return {
+        "driver_id": b.driver_id,
+        "avg_blink_rate": b.avg_blink_rate,
+        "avg_eye_openness": b.avg_eye_openness,
+        "avg_yawn_frequency": b.avg_yawn_frequency,
+        "shift_count": b.shift_count,
+        "last_updated": b.last_updated,
+    }
 
 
-def handle_trigger_rest_break(severity: str, reason: str, suggested_minutes: int = 15) -> dict:
-    raise NotImplementedError
+def handle_get_shift_trend(shift_id: str, **_) -> dict:
+    from memory.shift_history import get_all_frames
+    frames = get_all_frames(shift_id)
+    if not frames:
+        return {"shift_id": shift_id, "sample_count": 0, "message": "No frames recorded yet"}
+    return {
+        "shift_id": shift_id,
+        "sample_count": len(frames),
+        "avg_eye_openness": round(sum(f.eye_openness for f in frames) / len(frames), 3),
+        "avg_blink_rate": round(sum(f.blink_rate for f in frames) / len(frames), 2),
+        "total_yawns": sum(1 for f in frames if f.yawn_detected),
+    }
 
 
-def handle_trigger_phone_notify(severity: str, message: str) -> dict:
-    raise NotImplementedError
+def handle_get_recent_interventions(shift_id: str, last_n_minutes: int = 30, **_) -> dict:
+    import time
+    from memory.shift_history import get_interventions
+    cutoff = time.time() - (last_n_minutes * 60)
+    all_interventions = get_interventions(shift_id)
+    recent = [r for r in all_interventions if r.timestamp >= cutoff]
+    return {
+        "count": len(recent),
+        "interventions": [
+            {
+                "type": r.intervention_type,
+                "severity": r.severity,
+                "minutes_ago": round((time.time() - r.timestamp) / 60, 1),
+                "summary": r.action_summary,
+            }
+            for r in recent
+        ],
+    }
 
 
-def handle_log_intervention(intervention_type: str, severity: str, action_summary: str) -> dict:
-    raise NotImplementedError
+def handle_trigger_alert(severity: str, reason: str, driver_id: str = "", shift_id: str = "", **_) -> dict:
+    from core.models import InterventionDecision
+    from actions.alert import execute
+    import time
+    decision = InterventionDecision(
+        should_intervene=True, severity=severity, intervention_type="alert",
+        trigger_companion=False, reason=reason, confidence=1.0, timestamp=time.time(),
+    )
+    record = execute(decision, driver_id, shift_id)
+    return {"status": "alert_fired", "severity": severity, "intervention_id": record.intervention_id}
+
+
+def handle_trigger_rest_break(severity: str, reason: str, suggested_minutes: int = 15, driver_id: str = "", shift_id: str = "", **_) -> dict:
+    from core.models import InterventionDecision
+    from actions.rest_break import execute
+    import time
+    decision = InterventionDecision(
+        should_intervene=True, severity=severity, intervention_type="rest_break",
+        trigger_companion=False, reason=reason, confidence=1.0, timestamp=time.time(),
+    )
+    record = execute(decision, driver_id, shift_id)
+    return {"status": "rest_break_recommended", "stops": record.suggested_stops, "intervention_id": record.intervention_id}
+
+
+def handle_trigger_phone_notify(severity: str, message: str, driver_id: str = "", shift_id: str = "", **_) -> dict:
+    from core.models import InterventionDecision
+    from actions.phone_notify import execute
+    import time
+    decision = InterventionDecision(
+        should_intervene=True, severity=severity, intervention_type="phone_notify",
+        trigger_companion=False, reason=message, confidence=1.0, timestamp=time.time(),
+    )
+    record = execute(decision, driver_id, shift_id)
+    return {"status": "notification_sent", "severity": severity, "intervention_id": record.intervention_id}
+
+
+def handle_log_intervention(intervention_type: str, severity: str, action_summary: str, driver_id: str = "", shift_id: str = "", **_) -> dict:
+    import time, uuid
+    from core.models import InterventionRecord
+    from memory.shift_history import append_intervention
+    record = InterventionRecord(
+        intervention_id=str(uuid.uuid4()),
+        driver_id=driver_id,
+        shift_id=shift_id,
+        timestamp=time.time(),
+        severity=severity,
+        intervention_type=intervention_type,
+        action_summary=action_summary,
+    )
+    append_intervention(record)
+    return {"status": "logged", "intervention_id": record.intervention_id}
+
+
+TOOL_HANDLERS = {
+    "check_baseline": handle_check_baseline,
+    "get_shift_trend": handle_get_shift_trend,
+    "get_recent_interventions": handle_get_recent_interventions,
+    "trigger_alert": handle_trigger_alert,
+    "trigger_rest_break": handle_trigger_rest_break,
+    "trigger_phone_notify": handle_trigger_phone_notify,
+    "log_intervention": handle_log_intervention,
+}
