@@ -21,14 +21,60 @@ Imports from: core.models, llm.client, llm.companion_prompts
 """
 
 
-def generate(context, prior_messages: list) -> "CompanionMessage":
+import subprocess
+import time
+
+from core.models import CompanionMessage, ShiftContext
+from config.settings import load_config
+from llm.client import complete
+from llm.companion_prompts import COMPANION_SYSTEM_PROMPT, build_user_message
+
+_config = load_config()
+
+
+def generate(context: ShiftContext, prior_messages: list, severity: str) -> CompanionMessage:
     """Generate a proactive CompanionMessage for the current cycle.
 
     Args:
         context: ShiftContext from agents/context_builder.py
         prior_messages: list[CompanionMessage] — this shift, for deduplication
+        severity: current severity level from InterventionDecision ("none"|"low"|"medium"|"high"|"critical")
 
     Returns:
         CompanionMessage
     """
-    raise NotImplementedError
+    messages = [
+        {"role": "system", "content": COMPANION_SYSTEM_PROMPT},
+        {"role": "user", "content": build_user_message(context, prior_messages, severity)},
+    ]
+    response = complete(
+        model=_config.api.nemotron_companion_model,
+        messages=messages,
+        temperature=0.8,   # higher than safety agent — we want natural, varied conversation
+        max_tokens=80,     # keep it short; companion speaks in 1-2 sentences
+    )
+    message_text = response.strip()
+    _speak(message_text)
+    return CompanionMessage(
+        timestamp=time.time(),
+        driver_id=context.driver_id,
+        message=message_text,
+        trigger_reason=_infer_trigger_reason(severity, context),
+        severity_context=severity,
+    )
+
+
+def _infer_trigger_reason(severity: str, context: ShiftContext) -> str:
+    if severity in ("high", "critical"):
+        return "pre_intervention"
+    if not context.prior_interventions:
+        return "fatigue_building"
+    return "fatigue_building"
+
+
+def _speak(text: str) -> None:
+    # macOS TTS — reads the companion message aloud; no-ops silently on non-Mac
+    try:
+        subprocess.Popen(["say", "-v", "Samantha", text])
+    except FileNotFoundError:
+        pass

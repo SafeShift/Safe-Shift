@@ -18,7 +18,7 @@ def find_nearby_stops(
     latitude: float,
     longitude: float,
     radius_km: int = 10,
-    max_results: int = 3
+    max_results: int = 3,
 ) -> list:
     """Query Nominatim for nearby rest stops.
 
@@ -31,7 +31,49 @@ def find_nearby_stops(
     Returns:
         list of dicts: [{"name": str, "distance_km": float, "type": str}, ...]
     """
-    raise NotImplementedError
+    import math
+    import requests
+
+    # bounding box: roughly radius_km degrees offset
+    deg_offset = radius_km / 111.0
+    viewbox = (
+        f"{longitude - deg_offset},{latitude + deg_offset},"
+        f"{longitude + deg_offset},{latitude - deg_offset}"
+    )
+
+    results = []
+    # query each stop type separately so we get a useful mix
+    for amenity in ("rest_area", "fuel", "parking"):
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": amenity,
+                "format": "json",
+                "limit": max_results,
+                "bounded": 1,
+                "viewbox": viewbox,
+            },
+            headers={"User-Agent": "SafeShift/1.0"},
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            continue
+        for place in resp.json():
+            lat2 = float(place["lat"])
+            lon2 = float(place["lon"])
+            # haversine distance
+            dlat = math.radians(lat2 - latitude)
+            dlon = math.radians(lon2 - longitude)
+            a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(latitude)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+            dist_km = 6371 * 2 * math.asin(math.sqrt(a))
+            results.append({
+                "name": place.get("display_name", "Unknown").split(",")[0],
+                "distance_km": round(dist_km, 1),
+                "type": amenity,
+            })
+
+    results.sort(key=lambda x: x["distance_km"])
+    return results[:max_results]
 
 
 def format_stop_list(stops: list) -> str:
@@ -43,4 +85,9 @@ def format_stop_list(stops: list) -> str:
     Returns:
         Formatted string, e.g. "1. Flying J (2.3 km)  2. Rest Area 44 (5.1 km)"
     """
-    raise NotImplementedError
+    if not stops:
+        return "No nearby stops found."
+    return "  ".join(
+        f"{i + 1}. {s['name']} ({s['distance_km']} km)"
+        for i, s in enumerate(stops)
+    )
