@@ -3,7 +3,14 @@ import json
 import time
 
 from core.models import FrameAnalysis, InterventionRecord
-from memory.store import get_connection
+from memory.store import MemoryStore
+from config.settings import config as _config
+
+_store = MemoryStore(_config)
+
+
+def get_connection():
+    return _store.get_connection()
 
 
 def init_shift(shift_id: str, driver_id: str) -> None:
