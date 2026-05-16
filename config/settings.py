@@ -25,7 +25,7 @@ def load_config(path=None):
         "nemotron_api_key": os.environ["NEMOTRON_API_KEY"],
         "nemotron_base_url": os.getenv("NEMOTRON_BASE_URL", "https://integrate.api.nvidia.com/v1"),
         "nemotron_super_model": os.getenv("NEMOTRON_SUPER_MODEL", "nvidia/llama-3_3-nemotron-super-49b-v1_5"),
-        "nemotron_companion_model": os.getenv("NEMOTRON_COMPANION_MODEL", "nvidia/nemotron-3-voicechat"),
+        "nemotron_companion_model": os.getenv("NEMOTRON_COMPANION_MODEL", "nvidia/llama-3_3-nemotron-super-49b-v1_5"),
         "nemotron_vlm_model": os.getenv("NEMOTRON_VLM_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
     }
     data["driver"] = {
