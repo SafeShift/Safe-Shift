@@ -29,10 +29,10 @@ def send_alert(severity: str, message: str) -> bool:
     import sys
 
     _colour = {
-        "low":      "\033[93m",
-        "medium":   "\033[91m",
-        "high":     "\033[41m\033[97m",
-        "critical": "\033[41m\033[97m",
+        "low":      "\033[93m",          # yellow text
+        "medium":   "\033[33m",          # orange text
+        "high":     "\033[41m\033[97m",  # red background, white text
+        "critical": "\033[41m\033[97m",  # red background, white text
     }
     reset = "\033[0m"
     colour = _colour.get(severity, "\033[91m")
