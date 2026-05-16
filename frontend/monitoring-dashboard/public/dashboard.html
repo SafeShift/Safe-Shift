@@ -3,634 +3,415 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Driver Monitoring Dashboard</title>
+  <title>SafeShift — Driver Safety Monitor</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     :root {
-      --bg-primary: #0f0f0f;
-      --bg-panel: #1a1a1a;
-      --bg-panel-hover: #222222;
-      --nvidia-green: #76b900;
-      --text-primary: #ffffff;
-      --text-secondary: #a0a0a0;
-      --text-muted: #666666;
-      --border-color: #2a2a2a;
-      --severity-none: #666666;
-      --severity-low: #3b82f6;
-      --severity-medium: #f59e0b;
-      --severity-high: #f97316;
-      --severity-critical: #ef4444;
-      --color-green: #22c55e;
-      --color-yellow: #eab308;
-      --color-red: #ef4444;
-      --color-amber: #f59e0b;
-      --color-purple: #a855f7;
-      --color-blue: #3b82f6;
-      --color-teal: #14b8a6;
-      --font-mono: 'Courier New', monospace;
+      --bg-primary:    #0f0f0f;
+      --bg-panel:      #1a1a1a;
+      --border-color:  #2a2a2a;
+      --nvidia-green:  #76b900;
+      --text-primary:  #ffffff;
+      --text-secondary:#a0a0a0;
+      --text-muted:    #666666;
+      --sev-none:      #666666;
+      --sev-low:       #3b82f6;
+      --sev-medium:    #f59e0b;
+      --sev-high:      #f97316;
+      --sev-critical:  #ef4444;
+      --green:  #22c55e;
+      --yellow: #eab308;
+      --red:    #ef4444;
+      --amber:  #f59e0b;
+      --purple: #a855f7;
+      --blue:   #3b82f6;
+      --teal:   #14b8a6;
+      --mono:   'Courier New', monospace;
     }
 
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background-color: var(--bg-primary);
+      background: var(--bg-primary);
       color: var(--text-primary);
-      min-height: 100vh;
-      padding: 16px;
+      height: 100vh;
+      overflow: hidden;
+      padding: 10px;
     }
 
+    /* ── Full-page grid ── */
     .dashboard {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      max-width: 1600px;
-      margin: 0 auto;
+      height: 100%;
+      display: grid;
+      grid-template-rows: 38px 1fr 1fr 150px;
+      gap: 10px;
     }
 
-    .grid-top {
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px;
+    }
+    .header-title { font-size: 16px; font-weight: 700; color: var(--nvidia-green); letter-spacing: 0.05em; }
+    .header-right  { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-secondary); }
+
+    /* ── Row grids ── */
+    .grid-row {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
+      gap: 10px;
+      min-height: 0;
     }
 
+    /* ── Panel base ── */
     .panel {
-      background-color: var(--bg-panel);
+      background: var(--bg-panel);
       border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 20px;
-      position: relative;
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
     }
-
     .panel-header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 16px;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-shrink: 0;
     }
-
     .panel-title {
-      font-size: 14px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-
     .corner-tag {
-      font-size: 10px;
+      font-size: 9px;
       color: var(--nvidia-green);
-      background-color: rgba(118, 185, 0, 0.15);
-      padding: 4px 8px;
+      background: rgba(118,185,0,0.15);
+      padding: 3px 7px;
       border-radius: 4px;
       font-weight: 500;
     }
-
-    /* Panel 1 - Live Metrics */
-    .metrics-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
     }
 
-    .metric-item {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
 
-    .metric-label {
-      font-size: 12px;
-      color: var(--text-secondary);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .metric-value {
-      font-size: 18px;
-      font-weight: 600;
-    }
-
-    .progress-bar {
-      height: 8px;
-      background-color: var(--bg-primary);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      height: 100%;
-      border-radius: 4px;
-      transition: width 0.3s, background-color 0.3s;
-    }
-
+    /* ── Badges ── */
     .badge {
       display: inline-flex;
       align-items: center;
-      padding: 4px 10px;
+      padding: 3px 8px;
       border-radius: 20px;
-      font-size: 12px;
-      font-weight: 500;
-    }
-
-    .badge-green {
-      background-color: rgba(34, 197, 94, 0.2);
-      color: var(--color-green);
-    }
-
-    .badge-red {
-      background-color: rgba(239, 68, 68, 0.2);
-      color: var(--color-red);
-    }
-
-    .badge-amber {
-      background-color: rgba(245, 158, 11, 0.2);
-      color: var(--color-amber);
-    }
-
-    .badge-grey {
-      background-color: rgba(102, 102, 102, 0.2);
-      color: var(--text-secondary);
-    }
-
-    .flash-badge {
-      animation: flash 0.5s ease-in-out;
-    }
-
-    @keyframes flash {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
-
-    /* Panel 2 - Perception Agent */
-    .fatigue-bar {
-      height: 24px;
-      background: linear-gradient(to right, var(--color-green) 0%, var(--color-yellow) 50%, var(--color-red) 100%);
-      border-radius: 6px;
-      position: relative;
-      margin-bottom: 12px;
-    }
-
-    .fatigue-indicator {
-      position: absolute;
-      top: -4px;
-      width: 4px;
-      height: 32px;
-      background-color: var(--text-primary);
-      border-radius: 2px;
-      box-shadow: 0 0 8px rgba(255,255,255,0.5);
-      transition: left 0.3s;
-    }
-
-    .fatigue-score {
-      font-size: 32px;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
-
-    .description-text {
-      font-style: italic;
-      color: var(--text-secondary);
-      font-size: 14px;
-      line-height: 1.5;
-      margin-bottom: 12px;
-    }
-
-    .flags-container {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .flag-pill {
-      background-color: rgba(245, 158, 11, 0.2);
-      color: var(--color-amber);
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 500;
-    }
-
-    .last-updated {
       font-size: 11px;
-      color: var(--text-muted);
+      font-weight: 500;
     }
+    .badge-green { background: rgba(34,197,94,0.2);  color: var(--green); }
+    .badge-red   { background: rgba(239,68,68,0.2);  color: var(--red); }
+    .badge-amber { background: rgba(245,158,11,0.2); color: var(--amber); }
+    .badge-grey  { background: rgba(102,102,102,0.2); color: var(--text-secondary); }
 
-    /* Panel 3 - Safety Agent */
-    .severity-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 18px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 16px;
-    }
+    .flash-badge { animation: flash 0.5s ease-in-out; }
+    @keyframes flash { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-    .severity-none { background-color: var(--severity-none); }
-    .severity-low { background-color: var(--severity-low); }
-    .severity-medium { background-color: var(--severity-medium); color: #000; }
-    .severity-high { background-color: var(--severity-high); color: #000; }
-    .severity-critical { 
-      background-color: var(--severity-critical);
-      animation: pulse 1.5s ease-in-out infinite;
-    }
+    /* ════════════════════════════
+       ROW 1: Camera | Metrics | Log
+       ════════════════════════════ */
 
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-      50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-    }
-
-    .reason-text {
-      color: var(--text-secondary);
-      font-size: 14px;
-      margin-bottom: 16px;
-      line-height: 1.5;
-    }
-
-    .indicators {
-      display: flex;
-      gap: 16px;
-    }
-
-    .indicator {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-    }
-
-    .indicator-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-
-    .indicator-dot.on { background-color: var(--color-green); }
-    .indicator-dot.off { background-color: var(--color-red); }
-
-    /* Panel 4 - Companion Agent */
-    .chat-container {
-      min-height: 150px;
-    }
-
-    .chat-bubble {
-      background-color: var(--bg-primary);
-      border-radius: 12px;
-      padding: 12px 16px;
-      margin-bottom: 12px;
-      font-size: 14px;
-      line-height: 1.5;
-      border-left: 3px solid var(--nvidia-green);
-    }
-
-    .trigger-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background-color: rgba(118, 185, 0, 0.15);
-      color: var(--nvidia-green);
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 12px;
-      margin-bottom: 12px;
-    }
-
-    .waiting-state {
-      color: var(--text-muted);
-      font-style: italic;
-      text-align: center;
-      padding: 40px 0;
-    }
-
-    /* Panel 5 - Intervention Log */
-    .log-container {
-      max-height: 200px;
-      overflow-y: auto;
-    }
-
-    .log-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      padding: 12px 0;
-      border-bottom: 1px solid var(--border-color);
-    }
-
-    .log-item:last-child {
-      border-bottom: none;
-    }
-
-    .log-severity {
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      flex-shrink: 0;
-    }
-
-    .log-content {
+    /* Camera */
+    .camera-wrap {
       flex: 1;
-    }
-
-    .log-type {
-      font-size: 12px;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-
-    .log-summary {
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-
-    .rest-stops {
-      margin-top: 8px;
-      padding: 8px;
-      background-color: var(--bg-primary);
       border-radius: 6px;
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-
-    /* Panel 6 - Status Bar */
-    .panel-6-inner {
-      display: flex;
-      gap: 20px;
-      align-items: flex-start;
-    }
-
-    .camera-feed {
-      flex-shrink: 0;
-      width: 160px;
-      border-radius: 8px;
       overflow: hidden;
-      border: 1px solid var(--border-color);
       background: #000;
       position: relative;
+      min-height: 0;
     }
-
-    .camera-feed img {
-      width: 160px;
-      height: 120px;
-      object-fit: cover;
-      display: block;
-    }
-
+    .camera-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .camera-offline {
-      width: 160px;
-      height: 120px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 11px;
-      color: var(--text-muted);
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: var(--text-muted);
     }
 
-    .status-grid {
-      flex: 1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 16px;
+    /* Live Metrics */
+    .metrics-grid { display: flex; flex-direction: column; gap: 10px; }
+    .metric-item  { display: flex; flex-direction: column; gap: 5px; }
+    .metric-label {
+      font-size: 11px; color: var(--text-secondary);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .metric-value { font-size: 15px; font-weight: 600; }
+    .progress-bar { height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s, background-color 0.3s; }
+
+    /* Intervention Log */
+    .log-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 8px 0; border-bottom: 1px solid var(--border-color);
+    }
+    .log-item:last-child { border-bottom: none; }
+    .log-severity {
+      padding: 2px 6px; border-radius: 3px;
+      font-size: 9px; font-weight: 700; text-transform: uppercase; flex-shrink: 0;
+    }
+    .log-content { flex: 1; }
+    .log-type    { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+    .log-summary { font-size: 11px; color: var(--text-secondary); }
+    .rest-stops  {
+      margin-top: 6px; padding: 6px;
+      background: var(--bg-primary); border-radius: 4px;
+      font-size: 10px; color: var(--text-muted);
     }
 
-    .status-item {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+    /* Rest stop map (inside Intervention Log panel) */
+    #map { height: 110px; border-radius: 6px; border: 1px solid var(--border-color); margin-top: 8px; display: none; }
+
+    /* ════════════════════════════
+       ROW 2: Perception | Safety | Companion
+       ════════════════════════════ */
+
+    /* Perception Agent */
+    .fatigue-bar {
+      height: 14px;
+      background: linear-gradient(to right, var(--green) 0%, var(--yellow) 50%, var(--red) 100%);
+      border-radius: 4px; position: relative; margin-bottom: 8px;
     }
-
-    .status-label {
-      font-size: 11px;
-      color: var(--text-muted);
-      text-transform: uppercase;
+    .fatigue-indicator {
+      position: absolute; top: -3px;
+      width: 3px; height: 20px;
+      background: var(--text-primary); border-radius: 2px;
+      box-shadow: 0 0 6px rgba(255,255,255,0.5);
+      transition: left 0.3s;
     }
-
-    .status-value {
-      font-size: 14px;
-      font-weight: 600;
+    .fatigue-score { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+    .description-text {
+      font-style: italic; color: var(--text-secondary);
+      font-size: 12px; line-height: 1.4; margin-bottom: 8px;
     }
-
-    .connection-status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .flags-container { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+    .flag-pill {
+      background: rgba(245,158,11,0.2); color: var(--amber);
+      padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 500;
     }
+    .last-updated { font-size: 10px; color: var(--text-muted); }
 
-    .connection-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
+    /* Safety Agent */
+    .severity-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 18px; border-radius: 6px;
+      font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      margin-bottom: 10px;
     }
-
-    .connection-dot.connected { background-color: var(--color-green); }
-    .connection-dot.disconnected { background-color: var(--color-red); }
-
-    /* Panel 7 - Policy Monitor */
-    .panel-full {
-      grid-column: 1 / -1;
+    .severity-none     { background: var(--sev-none); }
+    .severity-low      { background: var(--sev-low); }
+    .severity-medium   { background: var(--sev-medium); color: #000; }
+    .severity-high     { background: var(--sev-high); color: #000; }
+    .severity-critical { background: var(--sev-critical); animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse {
+      0%,100%{ box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
+      50%    { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
     }
+    .reason-text { color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; line-height: 1.4; }
+    .indicators  { display: flex; gap: 12px; }
+    .indicator   { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+    .indicator-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .indicator-dot.on  { background: var(--green); }
+    .indicator-dot.off { background: var(--red); }
 
-    .filter-buttons {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
+    /* Companion Agent */
+    .chat-bubble {
+      background: var(--bg-primary); border-radius: 8px;
+      padding: 8px 12px; margin-bottom: 8px;
+      font-size: 12px; line-height: 1.4;
+      border-left: 3px solid var(--nvidia-green);
     }
+    .trigger-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: rgba(118,185,0,0.15); color: var(--nvidia-green);
+      padding: 4px 10px; border-radius: 5px; font-size: 11px; margin-bottom: 8px;
+    }
+    .waiting-state { color: var(--text-muted); font-style: italic; text-align: center; padding: 20px 0; font-size: 12px; }
 
+    /* ════════════════════════════
+       ROW 3: Policy Monitor
+       ════════════════════════════ */
+
+    .panel-full { grid-column: 1 / -1; }
+    .filter-buttons { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; flex-shrink: 0; }
     .filter-btn {
-      background-color: var(--bg-primary);
-      border: 1px solid var(--border-color);
-      color: var(--text-secondary);
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
+      background: var(--bg-primary); border: 1px solid var(--border-color);
+      color: var(--text-secondary); padding: 4px 10px;
+      border-radius: 5px; font-size: 11px; cursor: pointer; transition: all 0.2s;
     }
+    .filter-btn:hover { background: #222; }
+    .filter-btn.active { background: var(--nvidia-green); color: #000; border-color: var(--nvidia-green); }
 
-    .filter-btn:hover {
-      background-color: var(--bg-panel-hover);
-    }
-
-    .filter-btn.active {
-      background-color: var(--nvidia-green);
-      color: #000;
-      border-color: var(--nvidia-green);
-    }
-
-    .policy-log {
-      max-height: 200px;
-      overflow-y: auto;
-      font-family: var(--font-mono);
-      font-size: 12px;
-    }
-
+    .policy-log { flex: 1; overflow-y: auto; min-height: 0; font-family: var(--mono); font-size: 11px; }
     .policy-entry {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      padding: 8px;
-      border-left: 3px solid;
-      margin-bottom: 4px;
-      background-color: rgba(0,0,0,0.3);
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 5px 6px; border-left: 3px solid;
+      margin-bottom: 3px; background: rgba(0,0,0,0.3);
     }
-
-    .policy-entry.allowed { border-left-color: var(--color-green); }
-    .policy-entry.blocked { border-left-color: var(--color-red); }
-    .policy-entry.info { border-left-color: var(--text-muted); }
+    .policy-entry.allowed { border-left-color: var(--green); }
+    .policy-entry.blocked { border-left-color: var(--red); }
+    .policy-entry.info    { border-left-color: var(--text-muted); }
 
     .source-badge {
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      flex-shrink: 0;
+      padding: 1px 6px; border-radius: 3px;
+      font-size: 9px; font-weight: 700; text-transform: uppercase; flex-shrink: 0;
     }
+    .source-perception { background: rgba(168,85,247,0.3); color: var(--purple); }
+    .source-safety     { background: rgba(59,130,246,0.3);  color: var(--blue); }
+    .source-companion  { background: rgba(20,184,166,0.3);  color: var(--teal); }
+    .source-nemoclaw   { background: rgba(118,185,0,0.3);   color: var(--nvidia-green); }
 
-    .source-perception { background-color: rgba(168, 85, 247, 0.3); color: var(--color-purple); }
-    .source-safety { background-color: rgba(59, 130, 246, 0.3); color: var(--color-blue); }
-    .source-companion { background-color: rgba(20, 184, 166, 0.3); color: var(--color-teal); }
-    .source-nemoclaw { background-color: rgba(118, 185, 0, 0.3); color: var(--nvidia-green); }
-
-    .policy-timestamp {
-      color: var(--text-muted);
-      flex-shrink: 0;
-      width: 80px;
-    }
-
-    .policy-action {
-      color: var(--text-muted);
-      flex-shrink: 0;
-      font-size: 11px;
-    }
-
-    .policy-message {
-      flex: 1;
-      color: var(--text-secondary);
-    }
-
+    .policy-timestamp { color: var(--text-muted); flex-shrink: 0; width: 70px; }
+    .policy-action    { color: var(--text-muted); flex-shrink: 0; font-size: 10px; }
+    .policy-message   { flex: 1; color: var(--text-secondary); }
     .verdict-badge {
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      flex-shrink: 0;
+      padding: 1px 5px; border-radius: 2px;
+      font-size: 9px; font-weight: 700; text-transform: uppercase; flex-shrink: 0;
     }
-    .verdict-allowed { background-color: rgba(34, 197, 94, 0.2); color: var(--color-green); }
-    .verdict-blocked { background-color: rgba(239, 68, 68, 0.2); color: var(--color-red); }
-    .verdict-info { background-color: rgba(102, 102, 102, 0.2); color: var(--text-muted); }
+    .verdict-allowed { background: rgba(34,197,94,0.2);   color: var(--green); }
+    .verdict-blocked { background: rgba(239,68,68,0.2);   color: var(--red); }
+    .verdict-info    { background: rgba(102,102,102,0.2); color: var(--text-muted); }
 
-    /* Scrollbar Styling */
-    ::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: var(--bg-primary);
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: var(--border-color);
-      border-radius: 3px;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--text-muted);
-    }
-
-    @media (max-width: 1024px) {
-      .grid-top {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    @media (max-width: 768px) {
-      .grid-top {
-        grid-template-columns: 1fr;
-      }
-    }
+    /* connection dot */
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .conn-dot.connected    { background: var(--green); }
+    .conn-dot.disconnected { background: var(--red); }
   </style>
 </head>
 <body>
-  <div class="dashboard">
-    <!-- Top Grid: Panels 1-6 -->
-    <div class="grid-top">
-      <!-- Panel 1: Live Metrics -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Live Metrics</span>
+<div class="dashboard">
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <span class="header-title">SafeShift</span>
+    <div class="header-right">
+      <span>Driver: <strong id="status-driver">--</strong></span>
+      <span>Elapsed: <strong id="elapsed-time">--:--:--</strong></span>
+      <span>Cycles: <strong id="status-cycles">0</strong></span>
+      <span class="conn-dot connected" id="connection-dot"></span>
+      <span id="connection-text">Connected</span>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       ROW 1: Camera | Live Metrics | Intervention Log
+       ══════════════════════════════════════ -->
+  <div class="grid-row">
+
+    <!-- Camera Feed -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Camera Feed</span>
+      </div>
+      <div class="camera-wrap">
+        <img id="camera-img" src="/video" alt="Driver camera feed"
+             onerror="this.style.display='none';document.getElementById('camera-offline-msg').style.display='flex'">
+        <div class="camera-offline" id="camera-offline-msg" style="display:none">No feed</div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:8px;flex-shrink:0;">
+        <div>
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Driver</div>
+          <div style="font-size:12px;font-weight:600;" id="status-driver">--</div>
         </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Shift ID</div>
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);" id="status-shift">--</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Confidence</div>
+          <div style="font-size:12px;font-weight:600;" id="cam-confidence">--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Metrics -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Live Metrics</span>
+      </div>
+      <div class="panel-body">
         <div class="metrics-grid">
           <div class="metric-item">
             <div class="metric-label">
               <span>Eye Openness</span>
-              <span class="metric-value" id="eye-value">0.72</span>
+              <span class="metric-value" id="eye-value">--</span>
             </div>
             <div class="progress-bar">
-              <div class="progress-fill" id="eye-progress" style="width: 72%; background-color: var(--color-green);"></div>
+              <div class="progress-fill" id="eye-progress" style="width:0%;background:var(--green)"></div>
             </div>
           </div>
           <div class="metric-item">
             <div class="metric-label">
               <span>Blink Rate</span>
-              <span class="metric-value" id="blink-rate">18 <span style="font-size: 12px; font-weight: 400;">bpm</span></span>
+              <span class="metric-value" id="blink-rate">--</span>
             </div>
           </div>
           <div class="metric-item">
-            <div class="metric-label">
-              <span>Gaze Direction</span>
-            </div>
-            <span class="badge badge-green" id="gaze-badge">Forward</span>
+            <div class="metric-label"><span>Gaze Direction</span></div>
+            <span class="badge badge-grey" id="gaze-badge">--</span>
           </div>
           <div class="metric-item">
-            <div class="metric-label">
-              <span>Yawn Detected</span>
-            </div>
+            <div class="metric-label"><span>Yawn</span></div>
             <span class="badge badge-grey" id="yawn-badge">None</span>
           </div>
+          <div class="metric-item">
+            <div class="metric-label">
+              <span>Vision Confidence</span>
+              <span class="metric-value" id="status-confidence">--</span>
+            </div>
+          </div>
         </div>
       </div>
+    </div>
 
-      <!-- Panel 2: Perception Agent -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Perception Agent</span>
-          <span class="corner-tag">Nemotron-3-Nano-Omni</span>
-        </div>
-        <div class="fatigue-bar">
-          <div class="fatigue-indicator" id="fatigue-indicator" style="left: calc(35% - 2px);"></div>
-        </div>
-        <div class="fatigue-score" id="fatigue-score">35%</div>
-        <p class="description-text" id="perception-desc">Driver showing early signs of reduced alertness. Occasional delayed blink recovery and minor gaze drift detected.</p>
-        <div class="flags-container" id="flags-container">
-          <span class="flag-pill">Slow blink recovery</span>
-          <span class="flag-pill">Micro gaze drift</span>
-        </div>
-        <div class="last-updated">Last updated <span id="perception-updated">3</span>s ago</div>
+    <!-- Rest Stop Map -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Rest Stop Finder</span>
+        <span class="corner-tag">OpenStreetMap</span>
       </div>
+      <div id="map-waiting" style="flex:1;border:1px dashed var(--border-color);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);font-style:italic;">
+        Activates on rest break alert
+      </div>
+      <div id="map" style="flex:1;border-radius:6px;display:none;min-height:0;"></div>
+      <div id="stop-list" style="margin-top:6px;flex-shrink:0;display:flex;flex-direction:column;gap:3px;"></div>
+    </div>
 
-      <!-- Panel 3: Safety Agent -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Safety Agent</span>
-          <span class="corner-tag">Nemotron-Super</span>
-        </div>
-        <div class="severity-badge severity-low" id="severity-badge">LOW</div>
-        <p class="reason-text" id="safety-reason">Mild fatigue indicators present. Monitoring for escalation. No immediate intervention required.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       ROW 2: Safety Agent | Companion Agent | Intervention Log
+       ══════════════════════════════════════ -->
+  <div class="grid-row">
+
+    <!-- Safety Agent -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Safety Agent</span>
+        <span class="corner-tag">Nemotron-Super</span>
+      </div>
+      <div class="panel-body">
+        <div class="severity-badge severity-none" id="severity-badge">NONE</div>
+        <p class="reason-text" id="safety-reason">Waiting for first cycle...</p>
         <div class="indicators">
           <div class="indicator">
             <div class="indicator-dot off" id="intervene-indicator"></div>
@@ -642,486 +423,327 @@
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Panel 4: Companion Agent -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Companion Agent</span>
-          <span class="corner-tag">Nemotron-Super</span>
-        </div>
-        <div class="chat-container" id="chat-container">
-          <div class="trigger-badge" id="trigger-badge">
-            <span>●</span> Triggered by: Fatigue detection
-          </div>
-          <div class="chat-bubble" id="chat-bubble">
-            Hey there! I noticed you might be getting a bit tired. How about we play a quick game or chat about your destination? There's a great rest stop about 15 miles ahead if you need a break.
-          </div>
-        </div>
+    <!-- Companion Agent -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Companion Agent</span>
+        <span class="corner-tag">Nemotron-Super</span>
       </div>
-
-      <!-- Panel 5: Intervention Log -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Intervention Log</span>
-        </div>
-        <div class="log-container" id="log-container">
-          <div class="log-item">
-            <span class="log-severity" style="background-color: var(--severity-medium); color: #000;">MEDIUM</span>
-            <div class="log-content">
-              <div class="log-type">Audio Alert</div>
-              <div class="log-summary">Chime played after 3 consecutive slow blinks</div>
-            </div>
-          </div>
-          <div class="log-item">
-            <span class="log-severity" style="background-color: var(--severity-low);">LOW</span>
-            <div class="log-content">
-              <div class="log-type">Companion Engagement</div>
-              <div class="log-summary">Conversation initiated to maintain alertness</div>
-              <div class="rest-stops">📍 Suggested: Rest Stop - Exit 42 (15 mi), Travel Center - Exit 38 (8 mi)</div>
-            </div>
-          </div>
-          <div class="log-item">
-            <span class="log-severity" style="background-color: var(--severity-none);">NONE</span>
-            <div class="log-content">
-              <div class="log-type">System Check</div>
-              <div class="log-summary">Routine monitoring cycle completed</div>
-            </div>
-          </div>
-        </div>
+      <div class="panel-body" id="chat-container">
+        <div class="waiting-state" id="companion-waiting">Waiting for companion message...</div>
       </div>
+    </div>
 
-      <!-- Panel 6: Status Bar -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Status</span>
-        </div>
-        <div class="panel-6-inner">
-          <div class="camera-feed" id="camera-feed-container">
-            <img id="camera-img" src="/video" alt="Driver camera feed"
-                 onerror="this.style.display='none';document.getElementById('camera-offline-msg').style.display='flex'">
-            <div class="camera-offline" id="camera-offline-msg" style="display:none">No feed</div>
-          </div>
-          <div class="status-grid">
-            <div class="status-item">
-              <span class="status-label">Driver ID</span>
-              <span class="status-value" id="status-driver">--</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Shift ID</span>
-              <span class="status-value" id="status-shift">--</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Elapsed Time</span>
-              <span class="status-value" id="elapsed-time">--:--:--</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Connection</span>
-              <div class="connection-status">
-                <div class="connection-dot connected" id="connection-dot"></div>
-                <span id="connection-text">Connected</span>
-              </div>
-            </div>
-          </div>
+    <!-- Intervention Log -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Intervention Log</span>
+      </div>
+      <div class="panel-body" id="log-container">
+        <div style="color:var(--text-muted);font-size:11px;font-style:italic;padding:10px 0;">
+          No interventions yet.
         </div>
       </div>
     </div>
 
-    <!-- Panel 7: Policy Monitor (Full Width) -->
-    <div class="panel panel-full">
-      <div class="panel-header">
-        <span class="panel-title">Policy Monitor</span>
-      </div>
-      <div class="filter-buttons">
-        <button class="filter-btn active" data-filter="all">All</button>
-        <button class="filter-btn" data-filter="nemoclaw">NemoClaw</button>
-        <button class="filter-btn" data-filter="safety">Safety Agent</button>
-        <button class="filter-btn" data-filter="perception">Perception</button>
-        <button class="filter-btn" data-filter="companion">Companion</button>
-      </div>
-      <div class="policy-log" id="policy-log">
-        <div class="policy-entry allowed" data-source="nemoclaw">
-          <span class="policy-timestamp">14:32:05</span>
-          <span class="source-badge source-nemoclaw">NemoClaw</span>
-          <span class="policy-action">policy_event</span>
-          <span class="policy-message">companion_engagement - context validated, user consent active</span>
-          <span class="verdict-badge verdict-allowed">allowed</span>
-        </div>
-        <div class="policy-entry info" data-source="perception">
-          <span class="policy-timestamp">14:32:03</span>
-          <span class="source-badge source-perception">Perception</span>
-          <span class="policy-action">api_call</span>
-          <span class="policy-message">fatigue_score=0.35, confidence=0.92</span>
-          <span class="verdict-badge verdict-info">info</span>
-        </div>
-        <div class="policy-entry allowed" data-source="safety">
-          <span class="policy-timestamp">14:31:58</span>
-          <span class="source-badge source-safety">Safety</span>
-          <span class="policy-action">tool_call</span>
-          <span class="policy-message">trigger_alert(severity=medium) — threshold met</span>
-          <span class="verdict-badge verdict-allowed">allowed</span>
-        </div>
-        <div class="policy-entry blocked" data-source="nemoclaw">
-          <span class="policy-timestamp">14:31:45</span>
-          <span class="source-badge source-nemoclaw">NemoClaw</span>
-          <span class="policy-action">policy_event</span>
-          <span class="policy-message">haptic_feedback — driver preference disabled</span>
-          <span class="verdict-badge verdict-blocked">blocked</span>
-        </div>
-        <div class="policy-entry info" data-source="companion">
-          <span class="policy-timestamp">14:31:30</span>
-          <span class="source-badge source-companion">Companion</span>
-          <span class="policy-action">decision</span>
-          <span class="policy-message">engagement_mode=active, trigger=fatigue_detection</span>
-          <span class="verdict-badge verdict-info">info</span>
-        </div>
-        <div class="policy-entry allowed" data-source="perception">
-          <span class="policy-timestamp">14:31:15</span>
-          <span class="source-badge source-perception">Perception</span>
-          <span class="policy-action">api_call</span>
-          <span class="policy-message">slow_blink_recovery count=3, threshold=2</span>
-          <span class="verdict-badge verdict-allowed">allowed</span>
-        </div>
-        <div class="policy-entry info" data-source="safety">
-          <span class="policy-timestamp">14:30:00</span>
-          <span class="source-badge source-safety">Safety</span>
-          <span class="policy-action">decision</span>
-          <span class="policy-message">severity: none → low — mild fatigue indicators</span>
-          <span class="verdict-badge verdict-info">info</span>
-        </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       ROW 3: Policy Monitor (full width)
+       ══════════════════════════════════════ -->
+  <div class="panel panel-full">
+    <div class="panel-header" style="margin-bottom:6px;">
+      <span class="panel-title">Policy Monitor</span>
+      <span class="corner-tag">NemoClaw</span>
+    </div>
+    <div class="filter-buttons">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="nemoclaw">NemoClaw</button>
+      <button class="filter-btn" data-filter="safety">Safety Agent</button>
+      <button class="filter-btn" data-filter="perception">Perception</button>
+      <button class="filter-btn" data-filter="companion">Companion</button>
+    </div>
+    <div class="policy-log" id="policy-log">
+      <div style="color:var(--text-muted);font-size:11px;font-style:italic;padding:4px;">
+        Waiting for agent activity...
       </div>
     </div>
   </div>
 
-  <script>
-    // --- State ---
-    const SEVERITY_RANK = { none: 0, low: 1, medium: 2, high: 3, critical: 4 };
-    const SEVERITY_COLORS = {
-      none:     "var(--severity-none)",
-      low:      "var(--severity-low)",
-      medium:   "var(--severity-medium)",
-      high:     "var(--severity-high)",
-      critical: "var(--severity-critical)",
+</div>
+
+<script>
+  const SEV_RANK = { none:0, low:1, medium:2, high:3, critical:4 };
+  const SEV_COLOR = {
+    none:"var(--sev-none)", low:"var(--sev-low)", medium:"var(--sev-medium)",
+    high:"var(--sev-high)", critical:"var(--sev-critical)",
+  };
+  let _shiftStart=null, _vlmLastTs=null, _prevSevRank=0;
+  let _yawnTimer=null, _retryDelay=1000, _cycles=0;
+
+  // ── Leaflet ──
+  let _map=null, _driverMarker=null, _stopMarkers=[];
+  const DEFAULT_LAT=36.9916, DEFAULT_LON=-122.0583;
+
+  function initMap(lat,lon) {
+    if (_map) return;
+    const el = document.getElementById("map");
+    const waiting = document.getElementById("map-waiting");
+    el.style.display = "block";
+    if (waiting) waiting.style.display = "none";
+    _map = L.map("map", {zoomControl:true}).setView([lat,lon],13);
+    setTimeout(()=>_map.invalidateSize(), 100);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+      attribution:"© OpenStreetMap",maxZoom:18
+    }).addTo(_map);
+    _driverMarker = L.circleMarker([lat,lon],{
+      color:"#3b82f6",fillColor:"#3b82f6",fillOpacity:0.9,radius:7
+    }).addTo(_map).bindPopup("Driver Location");
+  }
+
+  function updateMapStops(stops) {
+    initMap(DEFAULT_LAT, DEFAULT_LON);
+    _stopMarkers.forEach(m=>_map.removeLayer(m));
+    _stopMarkers=[];
+    const listEl=document.getElementById("stop-list");
+    if(listEl) listEl.innerHTML="";
+    stops.forEach((stop,i)=>{
+      const lat=stop.lat??stop.latitude;
+      const lon=stop.lon??stop.longitude??stop.lng;
+      const name=stop.name??stop.display_name??`Rest Stop ${i+1}`;
+      if(lat&&lon){
+        const m=L.marker([lat,lon]).addTo(_map).bindPopup(`<b>${esc(name)}</b>`);
+        _stopMarkers.push(m);
+      }
+      if(listEl){
+        const item=document.createElement("div");
+        item.style.cssText="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary)";
+        item.innerHTML=`<span style="width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0;display:inline-block"></span>${esc(name)}`;
+        listEl.appendChild(item);
+      }
+    });
+    if(_stopMarkers.length>0){
+      const grp=L.featureGroup([_driverMarker,..._stopMarkers]);
+      _map.fitBounds(grp.getBounds().pad(0.15));
+    }
+  }
+
+  // ── SSE ──
+  function connectSSE(){
+    const s=new EventSource("/stream");
+    s.addEventListener("message",e=>{
+      _retryDelay=1000; setConnected(true);
+      const ev=JSON.parse(e.data);
+      switch(ev.type){
+        case "frame":        updateLiveMetrics(ev.data);     break;
+        case "vlm":          updatePerception(ev.data);      break;
+        case "decision":     updateSafety(ev.data);          break;
+        case "companion":    updateCompanion(ev.data);       break;
+        case "intervention": appendIntervention(ev.data);    break;
+        case "audit":        appendAuditEntry(ev.data);      break;
+      }
+    });
+    s.onerror=()=>{
+      setConnected(false); s.close();
+      setTimeout(connectSSE,_retryDelay);
+      _retryDelay=Math.min(_retryDelay*2,30000);
     };
-    let _shiftStart     = null;
-    let _vlmLastTs      = null;
-    let _prevSevRank    = 0;
-    let _yawnTimer      = null;
-    let _retryDelay     = 1000;
+  }
 
-    // --- SSE connection ---
-    function connectSSE() {
-      const stream = new EventSource("/stream");
-      stream.addEventListener("message", (e) => {
-        _retryDelay = 1000;
-        setConnected(true);
-        const event = JSON.parse(e.data);
-        switch (event.type) {
-          case "frame":        updateLiveMetrics(event.data);    break;
-          case "vlm":          updatePerceptionAgent(event.data); break;
-          case "decision":     updateSafetyAgent(event.data);   break;
-          case "companion":    updateCompanionAgent(event.data); break;
-          case "intervention": appendIntervention(event.data);   break;
-          case "audit":        appendAuditEntry(event.data);     break;
-        }
+  async function preloadState(){
+    try{
+      const r=await fetch("/state"); const st=await r.json();
+      if(st.frame)        updateLiveMetrics(st.frame);
+      if(st.vlm)          updatePerception(st.vlm);
+      if(st.decision)     updateSafety(st.decision);
+      if(st.companion)    updateCompanion(st.companion);
+      if(st.intervention) appendIntervention(st.intervention);
+    }catch(_){}
+  }
+
+  function setConnected(ok){
+    const d=document.getElementById("connection-dot");
+    const t=document.getElementById("connection-text");
+    if(d) d.className="conn-dot "+(ok?"connected":"disconnected");
+    if(t) t.textContent=ok?"Connected":"Disconnected";
+  }
+
+  setInterval(()=>{
+    if(!_shiftStart) return;
+    const sec=Math.floor(Date.now()/1000-_shiftStart);
+    const h=String(Math.floor(sec/3600)).padStart(2,"0");
+    const m=String(Math.floor((sec%3600)/60)).padStart(2,"0");
+    const s=String(sec%60).padStart(2,"0");
+    const el=document.getElementById("elapsed-time");
+    if(el) el.textContent=`${h}:${m}:${s}`;
+  },1000);
+
+  setInterval(()=>{
+    if(!_vlmLastTs) return;
+    const el=document.getElementById("perception-updated");
+    if(el) el.textContent=Math.round(Date.now()/1000-_vlmLastTs);
+  },1000);
+
+  // ── Panel updaters ──
+  function updateLiveMetrics(d){
+    if(!_shiftStart&&d.timestamp) _shiftStart=d.timestamp;
+    _cycles++;
+    const c=document.getElementById("status-cycles"); if(c) c.textContent=_cycles;
+
+    const op=d.eye_openness??0;
+    const bar=document.getElementById("eye-progress");
+    if(bar){
+      bar.style.width=`${Math.round(op*100)}%`;
+      bar.style.background=op>=0.6?"var(--green)":op>=0.4?"var(--yellow)":"var(--red)";
+    }
+    const ev=document.getElementById("eye-value"); if(ev) ev.textContent=op.toFixed(2);
+
+    const br=document.getElementById("blink-rate");
+    if(br) br.innerHTML=`${(d.blink_rate??0).toFixed(1)} <span style="font-size:10px;font-weight:400">bpm</span>`;
+
+    const gz=document.getElementById("gaze-badge");
+    if(gz){
+      const dir=d.gaze_direction??"unknown";
+      gz.textContent=dir.charAt(0).toUpperCase()+dir.slice(1);
+      gz.className="badge "+(dir!=="forward"?"badge-red":"badge-green");
+    }
+
+    const yn=document.getElementById("yawn-badge");
+    if(yn&&d.yawn_detected){
+      yn.textContent="YAWN!"; yn.className="badge badge-red flash-badge";
+      clearTimeout(_yawnTimer);
+      _yawnTimer=setTimeout(()=>{yn.textContent="None";yn.className="badge badge-grey";},3000);
+    }
+
+    const cf=document.getElementById("status-confidence"); if(cf&&d.confidence!=null) cf.textContent=`${Math.round(d.confidence*100)}%`;
+    const cc=document.getElementById("cam-confidence");   if(cc&&d.confidence!=null) cc.textContent=`${Math.round(d.confidence*100)}%`;
+
+    if(d.driver_id){
+      const el=document.getElementById("status-driver");
+      if(el&&el.textContent==="--") el.textContent=d.driver_id;
+    }
+    if(d.shift_id){
+      const el=document.getElementById("status-shift");
+      if(el&&el.textContent==="--") el.textContent=d.shift_id.slice(0,8)+"…";
+    }
+  }
+
+  function updatePerception(d){
+    _vlmLastTs=d.timestamp??(Date.now()/1000);
+    const sc=d.fatigue_score??0;
+    const ind=document.getElementById("fatigue-indicator");
+    if(ind) ind.style.left=`calc(${Math.round(sc*100)}% - 2px)`;
+    const sel=document.getElementById("fatigue-score");
+    if(sel){
+      sel.textContent=`${Math.round(sc*100)}%`;
+      sel.style.color=sc>=0.7?"var(--red)":sc>=0.4?"var(--yellow)":"var(--green)";
+    }
+    const de=document.getElementById("perception-desc"); if(de) de.textContent=d.description??"";
+    const fl=document.getElementById("flags-container");
+    if(fl) fl.innerHTML=(d.flags??[]).map(f=>`<span class="flag-pill">${esc(f)}</span>`).join("");
+    const ag=document.getElementById("perception-updated"); if(ag) ag.textContent="0";
+  }
+
+  function updateSafety(d){
+    const sev=d.severity??"none";
+    const badge=document.getElementById("severity-badge");
+    if(badge){
+      const r=SEV_RANK[sev]??0;
+      badge.className="severity-badge severity-"+sev;
+      badge.textContent=sev.toUpperCase();
+      if(r>_prevSevRank){ badge.classList.add("flash-badge"); setTimeout(()=>badge.classList.remove("flash-badge"),1600); }
+      _prevSevRank=r;
+    }
+    const re=document.getElementById("safety-reason"); if(re) re.textContent=d.reason??"";
+    const id=document.getElementById("intervene-indicator");
+    const cd=document.getElementById("companion-indicator");
+    if(id) id.className="indicator-dot "+(d.should_intervene?"on":"off");
+    if(cd) cd.className="indicator-dot "+(d.trigger_companion?"on":"off");
+    if(d.driver_id){ const el=document.getElementById("status-driver"); if(el&&el.textContent==="--") el.textContent=d.driver_id; }
+  }
+
+  function updateCompanion(d){
+    const c=document.getElementById("chat-container"); if(!c) return;
+    const w=document.getElementById("companion-waiting"); if(w) w.remove();
+    let tb=document.getElementById("trigger-badge");
+    if(!tb){
+      tb=document.createElement("div"); tb.id="trigger-badge"; tb.className="trigger-badge"; c.prepend(tb);
+    }
+    tb.innerHTML=`<span>●</span> ${esc(d.trigger_reason??"")}`;
+    const bub=document.createElement("div"); bub.className="chat-bubble"; bub.textContent=d.message??"";
+    const first=c.querySelector(".chat-bubble");
+    if(first) c.insertBefore(bub,first); else c.appendChild(bub);
+    const all=c.querySelectorAll(".chat-bubble"); if(all.length>10) all[all.length-1].remove();
+  }
+
+  function appendIntervention(d){
+    const con=document.getElementById("log-container"); if(!con) return;
+    const ph=con.querySelector("div[style]"); if(ph) ph.remove();
+    const sev=d.severity??"none";
+    const col=SEV_COLOR[sev]??SEV_COLOR.none;
+    const tc=["medium","high"].includes(sev)?"#000":"#fff";
+    const stops=d.suggested_stops??[];
+    const stopsHtml=stops.length
+      ?`<div class="rest-stops">📍 ${stops.map(s=>typeof s==="string"?esc(s):esc(s.name??JSON.stringify(s))).join(" · ")}</div>`:"";
+    const item=document.createElement("div"); item.className="log-item";
+    item.innerHTML=`
+      <span class="log-severity" style="background:${col};color:${tc}">${esc(sev.toUpperCase())}</span>
+      <div class="log-content">
+        <div class="log-type">${esc(d.intervention_type??"")}</div>
+        <div class="log-summary">${esc(d.action_summary??"")}</div>
+        ${stopsHtml}
+      </div>`;
+    con.prepend(item);
+    const all=con.querySelectorAll(".log-item"); if(all.length>50) all[all.length-1].remove();
+    if(stops.length>0) updateMapStops(stops);
+  }
+
+  function appendAuditEntry(d){
+    const log=document.getElementById("policy-log"); if(!log) return;
+    const ph=log.querySelector("div[style]"); if(ph) ph.remove();
+    const v=d.verdict??"info";
+    const ts=d.timestamp?new Date(d.timestamp*1000).toLocaleTimeString([],{hour12:false}):"--";
+    const e=document.createElement("div");
+    e.className=`policy-entry ${v}`; e.dataset.source=d.source??"";
+    e.innerHTML=`
+      <span class="policy-timestamp">${ts}</span>
+      <span class="source-badge source-${esc(d.source??"")} ">${esc(d.source??"")}</span>
+      <span class="policy-action">${esc(d.action_type??"")}</span>
+      <span class="policy-message">${esc(d.description??"")}</span>
+      <span class="verdict-badge verdict-${esc(v)}">${v}</span>`;
+    log.prepend(e);
+    if(v==="blocked"){
+      e.style.background="rgba(239,68,68,0.2)";
+      setTimeout(()=>{ e.style.background="rgba(0,0,0,0.3)"; },1200);
+    }
+    const all=log.querySelectorAll(".policy-entry"); if(all.length>200) all[all.length-1].remove();
+    applyAuditFilter();
+  }
+
+  function initAuditFilter(){
+    document.querySelectorAll(".filter-btn").forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        document.querySelectorAll(".filter-btn").forEach(b=>b.classList.remove("active"));
+        btn.classList.add("active"); applyAuditFilter();
       });
-      stream.onerror = () => {
-        setConnected(false);
-        stream.close();
-        setTimeout(connectSSE, _retryDelay);
-        _retryDelay = Math.min(_retryDelay * 2, 30000);
-      };
-    }
+    });
+  }
 
-    // --- /state preload ---
-    async function preloadState() {
-      try {
-        const res = await fetch("/state");
-        const state = await res.json();
-        if (state.frame)        updateLiveMetrics(state.frame);
-        if (state.vlm)          updatePerceptionAgent(state.vlm);
-        if (state.decision)     updateSafetyAgent(state.decision);
-        if (state.companion)    updateCompanionAgent(state.companion);
-        if (state.intervention) appendIntervention(state.intervention);
-      } catch (_) { /* server may not be ready yet */ }
-    }
+  function applyAuditFilter(){
+    const a=document.querySelector(".filter-btn.active");
+    const f=a?a.dataset.filter:"all";
+    document.querySelectorAll(".policy-entry").forEach(e=>{
+      e.style.display=(f==="all"||e.dataset.source===f)?"flex":"none";
+    });
+  }
 
-    // --- Connection status (Panel 6) ---
-    function setConnected(connected) {
-      const dot = document.getElementById("connection-dot");
-      const txt = document.getElementById("connection-text");
-      if (dot) dot.className = "connection-dot " + (connected ? "connected" : "disconnected");
-      if (txt) txt.textContent = connected ? "Connected" : "Disconnected";
-    }
+  function esc(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
 
-    // --- Elapsed clock (Panel 6) ---
-    setInterval(() => {
-      if (!_shiftStart) return;
-      const sec = Math.floor(Date.now() / 1000 - _shiftStart);
-      const h = String(Math.floor(sec / 3600)).padStart(2, "0");
-      const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
-      const s = String(sec % 60).padStart(2, "0");
-      const el = document.getElementById("elapsed-time");
-      if (el) el.textContent = `${h}:${m}:${s}`;
-    }, 1000);
-
-    // --- VLM age counter (Panel 2) ---
-    setInterval(() => {
-      if (!_vlmLastTs) return;
-      const ago = Math.round(Date.now() / 1000 - _vlmLastTs);
-      const el = document.getElementById("perception-updated");
-      if (el) el.textContent = ago;
-    }, 1000);
-
-    // --- Panel 1: Live Metrics ---
-    function updateLiveMetrics(data) {
-      if (!_shiftStart && data.timestamp) _shiftStart = data.timestamp;
-
-      // Eye openness progress bar
-      const openness = data.eye_openness ?? 0;
-      const eyeBar = document.getElementById("eye-progress");
-      if (eyeBar) {
-        eyeBar.style.width = `${Math.round(openness * 100)}%`;
-        eyeBar.style.backgroundColor =
-          openness >= 0.6 ? "var(--color-green)"
-          : openness >= 0.4 ? "var(--color-yellow)"
-          : "var(--color-red)";
-      }
-      const eyeVal = document.getElementById("eye-value");
-      if (eyeVal) eyeVal.textContent = openness.toFixed(2);
-
-      // Blink rate
-      const blinkEl = document.getElementById("blink-rate");
-      if (blinkEl) blinkEl.innerHTML =
-        `${(data.blink_rate ?? 0).toFixed(1)} <span style="font-size:12px;font-weight:400">bpm</span>`;
-
-      // Gaze badge
-      const gazeEl = document.getElementById("gaze-badge");
-      if (gazeEl) {
-        const dir = data.gaze_direction ?? "unknown";
-        gazeEl.textContent = dir.charAt(0).toUpperCase() + dir.slice(1);
-        gazeEl.className = "badge " + (dir !== "forward" ? "badge-red" : "badge-green");
-      }
-
-      // Yawn flash badge (auto-clears after 3 s)
-      const yawnEl = document.getElementById("yawn-badge");
-      if (yawnEl && data.yawn_detected) {
-        yawnEl.textContent = "YAWN!";
-        yawnEl.className = "badge badge-red flash-badge";
-        clearTimeout(_yawnTimer);
-        _yawnTimer = setTimeout(() => {
-          yawnEl.textContent = "None";
-          yawnEl.className = "badge badge-grey";
-        }, 3000);
-      }
-
-      // Panel 6: driver / shift IDs
-      if (data.driver_id) {
-        const el = document.getElementById("status-driver");
-        if (el && el.textContent === "--") el.textContent = data.driver_id;
-      }
-      if (data.shift_id) {
-        const el = document.getElementById("status-shift");
-        if (el && el.textContent === "--") el.textContent = data.shift_id;
-      }
-    }
-
-    // --- Panel 2: Perception Agent ---
-    function updatePerceptionAgent(data) {
-      _vlmLastTs = data.timestamp ?? (Date.now() / 1000);
-      const score = data.fatigue_score ?? 0;
-
-      // Needle on gradient bar
-      const indicator = document.getElementById("fatigue-indicator");
-      if (indicator) indicator.style.left = `calc(${Math.round(score * 100)}% - 2px)`;
-
-      // Score text with colour
-      const scoreEl = document.getElementById("fatigue-score");
-      if (scoreEl) {
-        scoreEl.textContent = `${Math.round(score * 100)}%`;
-        scoreEl.style.color =
-          score >= 0.7 ? "var(--color-red)"
-          : score >= 0.4 ? "var(--color-yellow)"
-          : "var(--color-green)";
-      }
-
-      // Description
-      const descEl = document.getElementById("perception-desc");
-      if (descEl) descEl.textContent = data.description ?? "";
-
-      // Flag pills
-      const flagsEl = document.getElementById("flags-container");
-      if (flagsEl) {
-        flagsEl.innerHTML = (data.flags ?? [])
-          .map(f => `<span class="flag-pill">${esc(f)}</span>`).join("");
-      }
-
-      // Reset age counter
-      const ageEl = document.getElementById("perception-updated");
-      if (ageEl) ageEl.textContent = "0";
-    }
-
-    // --- Panel 3: Safety Agent ---
-    function updateSafetyAgent(data) {
-      const severity = data.severity ?? "none";
-      const badge = document.getElementById("severity-badge");
-      if (badge) {
-        const newRank = SEVERITY_RANK[severity] ?? 0;
-        badge.className = "severity-badge severity-" + severity;
-        badge.textContent = severity.toUpperCase();
-        if (newRank > _prevSevRank) {
-          // Trigger pulse on escalation via reflow trick
-          badge.classList.add("flash-badge");
-          setTimeout(() => badge.classList.remove("flash-badge"), 1600);
-        }
-        _prevSevRank = newRank;
-      }
-
-      const reasonEl = document.getElementById("safety-reason");
-      if (reasonEl) reasonEl.textContent = data.reason ?? "";
-
-      // should_intervene / trigger_companion dots
-      const intDot = document.getElementById("intervene-indicator");
-      const compDot = document.getElementById("companion-indicator");
-      if (intDot)  intDot.className  = "indicator-dot " + (data.should_intervene ? "on" : "off");
-      if (compDot) compDot.className = "indicator-dot " + (data.trigger_companion ? "on" : "off");
-
-      // Populate shift/driver from decision if not yet set
-      if (data.driver_id) {
-        const el = document.getElementById("status-driver");
-        if (el && el.textContent === "--") el.textContent = data.driver_id;
-      }
-      if (data.shift_id) {
-        const el = document.getElementById("status-shift");
-        if (el && el.textContent === "--") el.textContent = data.shift_id;
-      }
-    }
-
-    // --- Panel 4: Companion Agent ---
-    function updateCompanionAgent(data) {
-      const container = document.getElementById("chat-container");
-      if (!container) return;
-
-      // Update trigger badge
-      const triggerBadge = document.getElementById("trigger-badge");
-      if (triggerBadge)
-        triggerBadge.innerHTML = `<span>●</span> ${esc(data.trigger_reason ?? "")}`;
-
-      // Prepend new bubble
-      const bubble = document.createElement("div");
-      bubble.className = "chat-bubble";
-      bubble.textContent = data.message ?? "";
-      const firstBubble = container.querySelector(".chat-bubble");
-      if (firstBubble) {
-        container.insertBefore(bubble, firstBubble);
-      } else {
-        container.appendChild(bubble);
-      }
-
-      // Cap at 10 messages
-      const bubbles = container.querySelectorAll(".chat-bubble");
-      if (bubbles.length > 10) bubbles[bubbles.length - 1].remove();
-    }
-
-    // --- Panel 5: Intervention Log ---
-    function appendIntervention(data) {
-      const container = document.getElementById("log-container");
-      if (!container) return;
-
-      const severity = data.severity ?? "none";
-      const color = SEVERITY_COLORS[severity] ?? SEVERITY_COLORS.none;
-      const textColor = ["medium", "high"].includes(severity) ? "#000" : "#fff";
-      const stops = data.suggested_stops ?? [];
-      const stopsHtml = stops.length
-        ? `<div class="rest-stops">📍 ${stops.map(esc).join(" · ")}</div>`
-        : "";
-
-      const item = document.createElement("div");
-      item.className = "log-item";
-      item.innerHTML = `
-        <span class="log-severity" style="background-color:${color};color:${textColor}">
-          ${severity.toUpperCase()}
-        </span>
-        <div class="log-content">
-          <div class="log-type">${esc(data.intervention_type ?? "")}</div>
-          <div class="log-summary">${esc(data.action_summary ?? "")}</div>
-          ${stopsHtml}
-        </div>
-      `;
-      container.prepend(item);
-
-      // Cap at 50 entries
-      const items = container.querySelectorAll(".log-item");
-      if (items.length > 50) items[items.length - 1].remove();
-    }
-
-    // --- Panel 7: Policy Monitor ---
-    function appendAuditEntry(data) {
-      const logEl = document.getElementById("policy-log");
-      if (!logEl) return;
-
-      const verdict = data.verdict ?? "info";
-      const ts = data.timestamp
-        ? new Date(data.timestamp * 1000).toLocaleTimeString([], { hour12: false })
-        : "--";
-
-      const entry = document.createElement("div");
-      entry.className = `policy-entry ${verdict}`;
-      entry.dataset.source = data.source ?? "";
-      entry.innerHTML = `
-        <span class="policy-timestamp">${ts}</span>
-        <span class="source-badge source-${esc(data.source ?? "")}">${esc(data.source ?? "")}</span>
-        <span class="policy-action">${esc(data.action_type ?? "")}</span>
-        <span class="policy-message">${esc(data.description ?? "")}</span>
-        <span class="verdict-badge verdict-${esc(verdict)}">${verdict}</span>
-      `;
-      logEl.prepend(entry);
-
-      // Flash red background on BLOCKED entries
-      if (verdict === "blocked") {
-        entry.style.backgroundColor = "rgba(239,68,68,0.2)";
-        setTimeout(() => { entry.style.backgroundColor = "rgba(0,0,0,0.3)"; }, 1200);
-      }
-
-      // Cap at 200 DOM nodes
-      const entries = logEl.querySelectorAll(".policy-entry");
-      if (entries.length > 200) entries[entries.length - 1].remove();
-
-      applyAuditFilter();
-    }
-
-    // --- Audit filter buttons ---
-    function initAuditFilter() {
-      document.querySelectorAll(".filter-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
-          btn.classList.add("active");
-          applyAuditFilter();
-        });
-      });
-    }
-
-    function applyAuditFilter() {
-      const active = document.querySelector(".filter-btn.active");
-      const filter = active ? active.dataset.filter : "all";
-      document.querySelectorAll(".policy-entry").forEach(entry => {
-        entry.style.display =
-          (filter === "all" || entry.dataset.source === filter) ? "flex" : "none";
-      });
-    }
-
-    // --- XSS-safe string escaping ---
-    function esc(str) {
-      return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-    }
-
-    // --- Startup ---
-    preloadState();
-    connectSSE();
-    initAuditFilter();
-  </script>
+  preloadState(); connectSSE(); initAuditFilter();
+</script>
 </body>
 </html>

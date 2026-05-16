@@ -160,6 +160,23 @@ def handle_get_recent_interventions(shift_id: str, last_n_minutes: int = 30, **_
     }
 
 
+def _publish_intervention(record) -> None:
+    try:
+        from api.events import publish
+        publish("intervention", {
+            "intervention_id":   record.intervention_id,
+            "driver_id":         record.driver_id,
+            "shift_id":          record.shift_id,
+            "timestamp":         record.timestamp,
+            "severity":          record.severity,
+            "intervention_type": record.intervention_type,
+            "action_summary":    record.action_summary,
+            "suggested_stops":   record.suggested_stops,
+        })
+    except Exception:
+        pass
+
+
 def handle_trigger_alert(severity: str, reason: str, driver_id: str = "", shift_id: str = "", **_) -> dict:
     from core.models import InterventionDecision
     from actions.alert import execute
@@ -169,6 +186,7 @@ def handle_trigger_alert(severity: str, reason: str, driver_id: str = "", shift_
         trigger_companion=False, reason=reason, confidence=1.0, timestamp=time.time(),
     )
     record = execute(decision, driver_id, shift_id)
+    _publish_intervention(record)
     return {"status": "alert_fired", "severity": severity, "intervention_id": record.intervention_id}
 
 
@@ -181,6 +199,7 @@ def handle_trigger_rest_break(severity: str, reason: str, suggested_minutes: int
         trigger_companion=False, reason=reason, confidence=1.0, timestamp=time.time(),
     )
     record = execute(decision, driver_id, shift_id)
+    _publish_intervention(record)
     return {"status": "rest_break_recommended", "stops": record.suggested_stops, "intervention_id": record.intervention_id}
 
 
@@ -193,6 +212,7 @@ def handle_trigger_phone_notify(severity: str, message: str, driver_id: str = ""
         trigger_companion=False, reason=message, confidence=1.0, timestamp=time.time(),
     )
     record = execute(decision, driver_id, shift_id)
+    _publish_intervention(record)
     return {"status": "notification_sent", "severity": severity, "intervention_id": record.intervention_id}
 
 
