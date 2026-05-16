@@ -1,0 +1,10 @@
+# Brev cloud compute configuration
+# See: https://brev.dev/docs
+
+name: safeshift
+# GPU instance — adjust to available Brev offering (e.g. A10G, L4, H100)
+instance_type: nvidia-a10g
+
+startup_cmd: |
+  bash deployment/setup_brev.sh
+  python -m agent.orchestrator

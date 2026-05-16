@@ -1,0 +1,22 @@
+# Default thresholds used before a driver has accumulated personal baseline history.
+# All values are tuneable — adjust based on testing.
+
+driver_baseline_defaults:
+  avg_blink_rate: 15.0         # blinks/min (population average ~15)
+  avg_eye_openness: 0.75       # normalized 0–1
+  avg_yawn_frequency: 2.0      # yawns/hour at rest
+
+# Fatigue signal thresholds (deviation from baseline triggers scoring)
+thresholds:
+  eye_openness_droopy: 0.45    # below this = droopy (fraction of baseline)
+  blink_rate_low: 0.60         # below 60% of baseline = reduced blink rate (microsleep risk)
+  blink_rate_high: 1.50        # above 150% = compensatory blinking
+  yawn_frequency_alert: 4.0    # yawns/hour absolute threshold
+  gaze_off_forward_sec: 2.0    # seconds looking away from forward = distraction
+
+# Analysis window
+analysis_window_sec: 2         # how many seconds of frames to aggregate per FrameAnalysis
+recent_window_minutes: 10      # how many minutes of FrameAnalysis to include in ShiftContext
+
+# Intervention severity escalation
+severity_escalation_minutes: 5 # if same severity recurs within this window, escalate one level
