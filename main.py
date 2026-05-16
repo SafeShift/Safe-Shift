@@ -60,8 +60,10 @@ except ImportError:
 # init_shift() creates the shift row in SQLite so append_frame() calls succeed.
 # Signature: init_shift(shift_id, driver_id) -> None
 try:
+    from memory.store import init_db
     from memory.shift_history import init_shift
 except ImportError:
+    def init_db(): pass
     def init_shift(shift_id, driver_id): pass
 
 # KEVIN — implement memory/driver_baseline.py
@@ -184,6 +186,9 @@ def _fire_vlm_async(frame_bgr, driver_id: str, timestamp: float,
 def main() -> None:
     config = load_config()
     driver_id = config.driver.driver_id
+
+    # KEVIN — memory/store.py: creates SQLite tables if they don't exist yet
+    init_db()
 
     # KEVIN — core/audit.py: starts background JSONL writer + NemoClaw tail thread
     start_audit_recorder()
