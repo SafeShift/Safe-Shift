@@ -1,19 +1,81 @@
-"""Main per-cycle agent loop for SafeShift.
+"""Main per-cycle agent loop for SafeShift."""
+import logging
 
-Per-cycle responsibilities:
-1. Receive FrameAnalysis from vision/pipeline.py.
-2. Call agents/context_builder.build_context() to assemble ShiftContext.
-3. Invoke the Safety Reasoning Agent (agents/safety.py) — OpenClaw ReAct loop with
-   Nemotron-Super — to produce InterventionDecision.
-4. If decision.trigger_companion: spawn Companion Agent (agents/companion.py) in
-   parallel; dispatch CompanionMessage to display/TTS.
-5. If decision.should_intervene: dispatch the appropriate action handler via OpenClaw
-   tool call (actions/alert, rest_break, or phone_notify).
-6. Write the returned InterventionRecord to memory/shift_history.
-7. Always call actions/logging_client every cycle regardless of should_intervene.
-8. Publish all events to api/events.py for the frontend SSE stream.
+from config.settings import config
+from agents.context_builder import build_context
+from agents.safety import run as safety_run
+from agents.companion import generate as companion_generate
+from actions.logging_client import log_cycle
 
-Owner: Kevin
-Imports from: core.models, agents.context_builder, agents.safety, agents.companion,
-              agents.tools, actions.*, memory.shift_history, api.events
-"""
+logger = logging.getLogger(__name__)
+
+# companion message history — persists across cycles for deduplication
+_prior_companion_messages: list = []
+
+
+def run_cycle(frame, shift_id: str, shift_start: float, vlm_assessment=None) -> None:
+    # 1. assemble ShiftContext
+    context = build_context(frame, shift_id, shift_start, vlm_assessment)
+
+    # 2. Safety Reasoning Agent — ReAct loop → InterventionDecision
+    decision = safety_run(context)
+
+    # 3. Companion Agent — fires independently when triggered
+    companion_message = None
+    if decision.trigger_companion:
+        try:
+            companion_message = companion_generate(
+                context=context,
+                prior_messages=_prior_companion_messages,
+                severity=decision.severity,
+                model=config.api.nemotron_companion_model,
+            )
+            _prior_companion_messages.append(companion_message)
+        except Exception as e:
+            logger.warning("Companion agent failed: %s", e)
+
+    # 4. always log the cycle locally
+    log_cycle(frame, decision, companion_message)
+
+    # 5. publish events to frontend — wrapped so a Josh stub doesn't crash us
+    _publish_events(frame, decision, companion_message, vlm_assessment)
+
+
+def _publish_events(frame, decision, companion_message, vlm_assessment) -> None:
+    try:
+        from api.events import publish
+        import dataclasses
+
+        publish("frame", {
+            "driver_id": frame.driver_id,
+            "blink_rate": frame.blink_rate,
+            "eye_openness": frame.eye_openness,
+            "yawn_detected": frame.yawn_detected,
+            "yawn_frequency": frame.yawn_frequency,
+            "gaze_direction": frame.gaze_direction,
+            "confidence": frame.confidence,
+            "timestamp": frame.timestamp,
+        })
+        publish("decision", {
+            "severity": decision.severity,
+            "should_intervene": decision.should_intervene,
+            "intervention_type": decision.intervention_type,
+            "trigger_companion": decision.trigger_companion,
+            "reason": decision.reason,
+            "confidence": decision.confidence,
+        })
+        if vlm_assessment:
+            publish("vlm", {
+                "fatigue_score": vlm_assessment.fatigue_score,
+                "description": vlm_assessment.description,
+                "flags": vlm_assessment.flags,
+                "confidence": vlm_assessment.confidence,
+            })
+        if companion_message:
+            publish("companion", {
+                "message": companion_message.message,
+                "trigger_reason": companion_message.trigger_reason,
+                "severity_context": companion_message.severity_context,
+            })
+    except Exception as e:
+        logger.debug("Event publish skipped: %s", e)
