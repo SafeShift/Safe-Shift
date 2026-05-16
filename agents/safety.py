@@ -91,7 +91,18 @@ class SafetyAgent:
         )
         return self._parse_or_fallback(final["content"])
 
-    def _parse_or_fallback(self, raw: str) -> InterventionDecision:
+    def _parse_or_fallback(self, raw) -> InterventionDecision:
+        if not raw:
+            logger.warning("Safety agent returned no content — returning safe fallback")
+            return InterventionDecision(
+                should_intervene=False,
+                severity="none",
+                intervention_type="none",
+                trigger_companion=False,
+                reason="No content returned — defaulting to no intervention",
+                confidence=0.0,
+                timestamp=time.time(),
+            )
         try:
             return parse_intervention_decision(raw, timestamp=time.time())
         except ValueError:
