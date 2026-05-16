@@ -16,19 +16,22 @@ def execute(decision, driver_id: str, shift_id: str = "") -> "InterventionRecord
         decision: InterventionDecision from agents/safety.py
         driver_id: active driver ID
         shift_id: active shift UUID (injected by tool handler)
+        config: config object with demo_lat and demo_lon
 
     Returns:
         InterventionRecord with suggested_stops populated
     """
-    import os
     import time
     import uuid
     from core.models import InterventionRecord
     from actions.rest_finder import find_nearby_stops, format_stop_list
     from actions.notify_client import send_push
 
-    lat = float(os.getenv("DEMO_LAT", "36.9916"))
-    lon = float(os.getenv("DEMO_LON", "-122.0583"))
+    if config is None:
+        lat, lon = 36.9916, -122.0583
+    else:
+        lat = config.driver.demo_lat
+        lon = config.driver.demo_lon
 
     stops = find_nearby_stops(latitude=lat, longitude=lon, radius_km=10, max_results=3)
     stop_text = format_stop_list(stops)

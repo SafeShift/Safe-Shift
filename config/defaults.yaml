@@ -1,5 +1,8 @@
 # Default thresholds used before a driver has accumulated personal baseline history.
 # All values are tuneable — adjust based on testing.
+driver_profile:
+  driver_id: 0
+  driver_name: "Trucker Tom"
 
 driver_baseline_defaults:
   avg_blink_rate: 15.0         # blinks/min (population average ~15)
@@ -31,3 +34,10 @@ vision:
   camera_index: 0                 # webcam device index; used when media_source=camera
   image_dir: ""                   # path to image folder; used when media_source=image
   target_fps: 15
+
+# ── Demo location (for rest_finder) ─────────────────────────────────────────
+# Used when GPS is unavailable — set to your actual location day-of
+demo:
+  demo_lat: 36.9916
+  demo_lon: -122.0583
+

@@ -88,10 +88,11 @@ class VisionPipeline:
             if result.face_landmarks:
                 features = self.feature_extractor(result.face_landmarks[0])
                 self.aggregator.update(features, timestamp=now)
+                print("features produced")
             else:
                 logger.debug("No face detected at t=%.3f", now)
 
-            # ── Push mirmrored raw frame for visualization / VLM sampling ──────────────
+            # ── Push mirrored raw frame for visualization / VLM sampling ──────────────
             try:
                 frame_queue.put_nowait(cv2.flip(frame, 1))  # mirror for display
             except queue.Full:
