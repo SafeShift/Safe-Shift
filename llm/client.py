@@ -32,8 +32,9 @@ def complete_with_tools(
     tools: list,
     temperature: float = 0.2,
     max_tokens: int = 2048,
+    enable_thinking: bool = False,
 ) -> dict:
-    response = _client.chat.completions.create(
+    kwargs = dict(
         model=model,
         messages=messages,
         tools=[{"type": "function", "function": t} for t in tools],
@@ -41,9 +42,17 @@ def complete_with_tools(
         temperature=temperature,
         max_tokens=max_tokens,
     )
+    if enable_thinking:
+        kwargs["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_budget": 16384,
+        }
+
+    response = _client.chat.completions.create(**kwargs)
     message = response.choices[0].message
     return {
         "content": message.content,
+        "thinking": getattr(message, "reasoning_content", None),
         "tool_calls": [
             {
                 "id": tc.id,
