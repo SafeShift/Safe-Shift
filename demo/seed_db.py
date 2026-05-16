@@ -17,7 +17,8 @@ import sqlite3
 import datetime
 from core.models import DriverBaseline
 
-DRIVER_ID = "Trucker Tom"
+# Must match driver_profile.driver_id in config/defaults.yaml (cast to str)
+DRIVER_ID = "0"
 
 # Realistic baseline for an experienced long-haul driver across 8 prior shifts
 BASELINE = DriverBaseline(
