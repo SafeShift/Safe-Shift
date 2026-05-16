@@ -84,18 +84,6 @@ TOOLS = [
         }
     },
     {
-        "name": "trigger_phone_notify",
-        "description": "Send a push notification to the driver's own phone. Driver-only — no fleet. Tone scales with severity: gentle check-in at low, proactive nudge at medium, direct warning at high, maximum urgency at critical.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
-                "message": {"type": "string"}
-            },
-            "required": ["severity", "message"]
-        }
-    },
-    {
         "name": "log_intervention",
         "description": "Persist the intervention record to local memory. Always call this last.",
         "parameters": {

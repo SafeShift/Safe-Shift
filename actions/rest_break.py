@@ -21,24 +21,22 @@ def execute(decision, driver_id: str, shift_id: str = "") -> "InterventionRecord
     Returns:
         InterventionRecord with suggested_stops populated
     """
-    import time
-    import uuid
+    import os, time, uuid
     from core.models import InterventionRecord
     from actions.rest_finder import find_nearby_stops, format_stop_list
     from actions.notify_client import send_push
 
-    if config is None:
-        lat, lon = 36.9916, -122.0583
-    else:
-        lat = config.driver.demo_lat
-        lon = config.driver.demo_lon
+    lat = float(os.getenv("DEMO_LAT", "36.9916"))
+    lon = float(os.getenv("DEMO_LON", "-122.0583"))
 
     stops = find_nearby_stops(latitude=lat, longitude=lon, radius_km=10, max_results=3)
     stop_text = format_stop_list(stops)
     stop_names = [s["name"] for s in stops]
 
-    message = f"{decision.reason} Nearby stops: {stop_text}"
-    send_push(title="SafeShift - Rest Break Recommended", message=message, priority="high")
+    emoji = "🚨" if decision.severity == "critical" else "🔴"
+    title = f"{emoji} SafeShift - Pull Over Now" if decision.severity == "critical" else "🔴 SafeShift - Rest Break"
+    message = f"{emoji} {decision.reason} Nearby stops: {stop_text}"
+    send_push(title=title, message=message, priority="urgent" if decision.severity == "critical" else "high")
 
     return InterventionRecord(
         intervention_id=str(uuid.uuid4()),

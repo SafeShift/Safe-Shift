@@ -24,8 +24,10 @@ def execute(decision, driver_id: str, shift_id: str = "") -> "InterventionRecord
     import uuid
     from core.models import InterventionRecord
     from actions.alerting_client import send_alert
+    from actions.notify_client import send_severity_push
 
     send_alert(severity=decision.severity, message=decision.reason)
+    send_severity_push(decision.severity)
 
     return InterventionRecord(
         intervention_id=str(uuid.uuid4()),
