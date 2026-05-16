@@ -36,12 +36,62 @@ Output: after calling any action tool, emit a final JSON block:
 
 
 def build_user_message(context) -> str:
-    """Render a ShiftContext into the user-turn message for the safety ReAct session.
+    a = context.current_analysis
+    b = context.baseline
+    t = context.shift_trend
 
-    Args:
-        context: ShiftContext
+    blink_pct = ((a.blink_rate - b.avg_blink_rate) / b.avg_blink_rate * 100) if b.avg_blink_rate else 0
+    eye_pct = ((a.eye_openness - b.avg_eye_openness) / b.avg_eye_openness * 100) if b.avg_eye_openness else 0
 
-    Returns:
-        Formatted string describing current driver state, VLM assessment, and shift history
-    """
-    raise NotImplementedError
+    lines = [
+        f"=== DRIVER STATUS — {context.shift_elapsed_minutes:.1f} min into shift ===",
+        "",
+        "CURRENT READINGS (vs personal baseline):",
+        f"  Blink rate:    {a.blink_rate:.1f} blinks/min  (baseline {b.avg_blink_rate:.1f}, {blink_pct:+.0f}%)",
+        f"  Eye openness:  {a.eye_openness:.2f}            (baseline {b.avg_eye_openness:.2f}, {eye_pct:+.0f}%)",
+        f"  Yawn detected: {'YES' if a.yawn_detected else 'no'}  |  Yawn freq: {a.yawn_frequency:.1f}/hr  (baseline {b.avg_yawn_frequency:.1f}/hr)",
+        f"  Gaze:          {a.gaze_direction}  ({a.gaze_deviation_deg:.1f}° off center)",
+        f"  Confidence:    {a.confidence:.2f}",
+    ]
+
+    if context.vlm_assessment:
+        v = context.vlm_assessment
+        lines += [
+            "",
+            "VLM ASSESSMENT (Nemotron-Nano-Omi):",
+            f"  Fatigue score: {v.fatigue_score:.2f} / 1.0",
+            f"  Description:   {v.description}",
+            f"  Flags:         {', '.join(v.flags) if v.flags else 'none'}",
+            f"  Confidence:    {v.confidence:.2f}",
+        ]
+    else:
+        lines += ["", "VLM ASSESSMENT: not yet available (first cycle)"]
+
+    lines += [
+        "",
+        "SHIFT TREND:",
+        f"  Total samples:      {t.sample_count}",
+        f"  Total yawns:        {t.yawn_count_total}",
+        f"  Interventions so far: {t.intervention_count}",
+    ]
+
+    if t.avg_eye_openness_trend:
+        trend_str = " → ".join(f"{v:.2f}" for v in t.avg_eye_openness_trend[-5:])
+        lines.append(f"  Eye openness trend: {trend_str}")
+
+    if context.prior_interventions:
+        lines += ["", "PRIOR INTERVENTIONS THIS SHIFT:"]
+        for rec in context.prior_interventions[-3:]:
+            import time
+            mins_ago = (time.time() - rec.timestamp) / 60
+            lines.append(f"  [{rec.severity}] {rec.intervention_type} — {mins_ago:.0f} min ago: {rec.action_summary}")
+    else:
+        lines += ["", "PRIOR INTERVENTIONS: none this shift"]
+
+    lines += [
+        "",
+        "Use your tools to check baseline and recent interventions before deciding.",
+        "Emit the final JSON decision block after calling any action tool.",
+    ]
+
+    return "\n".join(lines)
