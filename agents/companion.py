@@ -78,15 +78,21 @@ def _infer_trigger_reason(severity: str, context: ShiftContext) -> str:
 
 
 def _speak(text: str, voice: str = "en-US-AriaNeural") -> None:
-    # edge-tts — natural TTS; falls back silently on failure
-    try:
-        import asyncio, edge_tts, tempfile, os
-        async def _play():
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                tmp = f.name
-            await edge_tts.Communicate(text, voice).save(tmp)
+    # Run edge-tts in a dedicated thread with its own event loop to avoid
+    # conflicts when an asyncio loop is already running in the main process
+    import threading, tempfile, os
+
+    def _run():
+        try:
+            import asyncio, edge_tts
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            tmp = tempfile.mktemp(suffix=".mp3")
+            loop.run_until_complete(edge_tts.Communicate(text, voice).save(tmp))
+            loop.close()
             subprocess.run(["afplay", tmp], check=True)
             os.unlink(tmp)
-        asyncio.run(_play())
-    except Exception:
-        pass
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
