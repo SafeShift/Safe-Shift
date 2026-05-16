@@ -45,6 +45,7 @@ def build_user_message(context) -> str:
 
     lines = [
         f"=== DRIVER STATUS — {context.shift_elapsed_minutes:.1f} min into shift ===",
+        f"shift_id: {context.shift_id}  |  driver_id: {context.driver_id}",
         "",
         "CURRENT READINGS (vs personal baseline):",
         f"  Blink rate:    {a.blink_rate:.1f} blinks/min  (baseline {b.avg_blink_rate:.1f}, {blink_pct:+.0f}%)",
@@ -90,7 +91,8 @@ def build_user_message(context) -> str:
 
     lines += [
         "",
-        "Use your tools to check baseline and recent interventions before deciding.",
+        f"Use shift_id='{context.shift_id}' and driver_id='{context.driver_id}' for all tool calls.",
+        "Check baseline and recent interventions before deciding.",
         "Emit the final JSON decision block after calling any action tool.",
     ]
 
