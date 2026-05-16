@@ -86,7 +86,13 @@ class SafetyAgent:
         # hit max steps — force a final completion with no tools
         final = self._client.complete_with_tools(
             model=self._model,
-            messages=messages + [{"role": "user", "content": "Emit your final JSON decision now."}],
+            messages=messages + [{"role": "user", "content": (
+                "You have already called the action tool. "
+                "Now output ONLY the final JSON block. No tool calls. No extra text. "
+                "Just the JSON: {\"should_intervene\": ..., \"severity\": ..., "
+                "\"intervention_type\": ..., \"trigger_companion\": ..., "
+                "\"reason\": ..., \"confidence\": ...}"
+            )}],
             tools=[],
         )
         return self._parse_or_fallback(final["content"])
