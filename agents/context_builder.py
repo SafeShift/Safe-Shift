@@ -41,6 +41,14 @@ def build_context(frame, shift_id: str, shift_start: float, store, config, vlm_a
 
     trend = _compute_shift_trend(shift_id, all_frames, bucket_minutes=5.0)
 
+    # Warm-start: FeatureAggregator cold-starts at 0.0 blink rate because no blinks
+    # have been counted yet in the first window. Substitute the driver's personal
+    # baseline so the safety agent doesn't see a false -100% alarm on cycle 1.
+    WARMUP_MINUTES = 1.0
+    if shift_elapsed_minutes < WARMUP_MINUTES and frame.blink_rate == 0.0:
+        from dataclasses import replace
+        frame = replace(frame, blink_rate=baseline.avg_blink_rate)
+
     return ShiftContext(
         driver_id=frame.driver_id,
         shift_id=shift_id,
