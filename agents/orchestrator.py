@@ -71,6 +71,11 @@ class Orchestrator:
             return
 
         append_intervention(record, self._store)
+        try:
+            from agents.tools import _publish_intervention
+            _publish_intervention(record)
+        except Exception:
+            pass
 
     def run_cycle(self, frame, shift_id: str, shift_start: float, vlm_assessment=None) -> None:
         # 1. assemble ShiftContext
