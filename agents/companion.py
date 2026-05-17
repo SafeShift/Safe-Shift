@@ -60,6 +60,8 @@ class CompanionAgent:
             temperature=0.8,  # higher than safety agent — natural, varied conversation
             max_tokens=300,   # room to think then produce a short response
         )
+        if not response:
+            raise ValueError("Companion LLM returned empty response")
         message_text = response.strip()
         _speak(message_text)
         return CompanionMessage(

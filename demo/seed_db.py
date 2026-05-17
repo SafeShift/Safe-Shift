@@ -20,11 +20,13 @@ from core.models import DriverBaseline
 # Must match driver_profile.driver_id in config/defaults.yaml (cast to str)
 DRIVER_ID = "0"
 
-# Realistic baseline for an experienced long-haul driver across 8 prior shifts
+# Baseline calibrated to the demo machine's webcam + driver.
+# MediaPipe eye openness scores vary significantly by camera, lighting, and face geometry.
+# 0.52 matches observed alert-state readings (~0.50-0.54) so fatigue deviations are meaningful.
 BASELINE = DriverBaseline(
     driver_id=DRIVER_ID,
     avg_blink_rate=16.2,        # healthy ~15-20 blinks/min
-    avg_eye_openness=0.74,      # fully alert reference
+    avg_eye_openness=0.52,      # calibrated to this demo setup (webcam + driver)
     avg_yawn_frequency=1.1,     # occasional yawn, not fatigued
     shift_count=8,
     last_updated=datetime.datetime.utcnow().isoformat(),

@@ -2,7 +2,6 @@
 import logging
 import time
 
-from core.models import InterventionDecision
 from agents.context_builder import build_context
 from actions.logging_client import log_cycle
 
@@ -11,33 +10,12 @@ logger = logging.getLogger(__name__)
 _SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
-def _estimate_severity(frame) -> int:
-    """Rough signal-based severity estimate used only for cooldown bypass decisions.
-
-    Returns an integer matching _SEVERITY_ORDER values so we can compare against
-    the last fired severity without calling the LLM.
-    """
-    eye = frame.eye_openness
-    yawn = frame.yawn_detected
-    if eye < 0.20:
-        return 4  # critical
-    if eye < 0.30 or (eye < 0.35 and yawn):
-        return 3  # high
-    if eye < 0.40 and yawn:
-        return 2  # medium
-    return 1      # low
-
-
-def _no_intervention() -> InterventionDecision:
-    return InterventionDecision(
-        should_intervene=False, severity="none", intervention_type="none",
-        trigger_companion=False, reason="Cooldown active", confidence=1.0,
-        timestamp=time.time(),
-    )
-
-
 class Orchestrator:
-    """Coordinates one analysis cycle: context → Safety Agent → Companion Agent → dispatch.
+    """Coordinates one analysis cycle: context → Safety Agent → cooldown → dispatch.
+
+    The safety agent is a pure reasoning component — it outputs a decision JSON
+    but fires no actions. This orchestrator applies cooldown logic in Python and
+    then dispatches actions, giving us deterministic rate limiting.
 
     Args:
         config:          SimpleNamespace from load_config().
@@ -51,41 +29,75 @@ class Orchestrator:
         self._safety    = safety_agent
         self._companion = companion_agent
         self._store     = store
-        self._prior_companion_messages: list = []  # dedup across cycles
+        self._prior_companion_messages: list = []
         self._last_intervention_time: float = 0.0
         self._last_intervention_severity: str = "none"
-        cooldown_min = getattr(config, "severity_escalation_minutes", 2)
+        self._last_companion_time: float = 0.0
+        cooldown_min = getattr(config, "severity_escalation_minutes", 1)
         self._cooldown_seconds: float = cooldown_min * 60
+        self._companion_min_interval: float = 45.0  # seconds between companion messages
+
+    def _in_cooldown(self, severity: str, now: float) -> bool:
+        """True if this severity is blocked by the cooldown window.
+
+        Escalation (higher severity than last) always bypasses cooldown.
+        Same or lower severity respects the window.
+        """
+        last_order = _SEVERITY_ORDER.get(self._last_intervention_severity, 0)
+        this_order = _SEVERITY_ORDER.get(severity, 0)
+        if this_order > last_order:
+            return False  # escalation always fires immediately
+        return (now - self._last_intervention_time) < self._cooldown_seconds
+
+    def _dispatch(self, decision, context) -> None:
+        """Fire the appropriate action and log the intervention record."""
+        import time
+        from core.models import InterventionDecision as _D
+        from memory.shift_history import append_intervention
+
+        _d = _D(
+            should_intervene=True, severity=decision.severity,
+            intervention_type=decision.intervention_type,
+            trigger_companion=False, reason=decision.reason,
+            confidence=decision.confidence, timestamp=time.time(),
+        )
+        if decision.severity in ("low", "medium"):
+            from actions.alert import execute
+            record = execute(_d, context.driver_id, context.shift_id)
+        elif decision.severity in ("high", "critical"):
+            from actions.rest_break import execute
+            record = execute(_d, context.driver_id, context.shift_id)
+        else:
+            return
+
+        append_intervention(record, self._store)
 
     def run_cycle(self, frame, shift_id: str, shift_start: float, vlm_assessment=None) -> None:
         # 1. assemble ShiftContext
         context = build_context(frame, shift_id, shift_start, self._store, self._config, vlm_assessment)
 
-        # 2. Safety Reasoning Agent — cooldown applies to same/lower severity only.
-        # Estimate current severity from raw signals; if it's higher than the last
-        # fired severity, bypass cooldown so the agent can escalate immediately.
+        # 2. Safety agent reasons and returns a decision (no side effects)
+        decision = self._safety.run(context)
+
+        # 3. Apply cooldown, then dispatch if allowed
         now = time.time()
-        secs_since_last = now - self._last_intervention_time
-        last_order = _SEVERITY_ORDER.get(self._last_intervention_severity, 0)
-        estimated_order = _estimate_severity(frame)
-        within_cooldown = (
-            secs_since_last < self._cooldown_seconds
-            and estimated_order <= last_order
-        )
-        if within_cooldown:
-            logger.debug("Cooldown active — %ds remaining (last=%s, est=%s)",
-                         int(self._cooldown_seconds - secs_since_last),
-                         self._last_intervention_severity, estimated_order)
-            decision = _no_intervention()
-        else:
-            decision = self._safety.run(context)
-            if decision.should_intervene and decision.severity != "none":
+        action_dispatched = False
+        if decision.should_intervene and decision.severity != "none":
+            if self._in_cooldown(decision.severity, now):
+                logger.debug("Cooldown suppressed %s intervention", decision.severity)
+                decision.should_intervene = False
+            else:
+                self._dispatch(decision, context)
                 self._last_intervention_time = now
                 self._last_intervention_severity = decision.severity
+                action_dispatched = True
 
-        # 3. Companion Agent — fires independently when triggered
+        # 4. Companion fires only when an action was just dispatched and enough
+        #    time has passed since the last companion message.
         companion_message = None
-        if decision.trigger_companion:
+        if (action_dispatched
+                and decision.trigger_companion
+                and (now - self._last_companion_time) >= self._companion_min_interval):
             try:
                 companion_message = self._companion.generate(
                     context=context,
@@ -93,6 +105,7 @@ class Orchestrator:
                     severity=decision.severity,
                 )
                 self._prior_companion_messages.append(companion_message)
+                self._last_companion_time = now
             except Exception as e:
                 logger.warning("Companion agent failed: %s", e)
 
