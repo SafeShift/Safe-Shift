@@ -1,10 +1,6 @@
 # SafeShift
 
-SafeShift is an autonomous driver-safety agent that monitors drivers via camera feed,
-analyzes fatigue and distraction signals (eye droopiness, blink rate, yawn frequency,
-gaze direction), reasons across a full shift against a per-driver baseline held in
-persistent memory, and triggers graduated interventions — in-cab alerts, rest-stop
-recommendations, and fleet-manager notifications.
+SafeShift is a privacy-first, multi-agent driver fatigue detection system built for long rides. It monitors the driver in real time via webcam, analyzes fatigue signals (eye droopiness, blink rate, yawn frequency, gaze direction) using MediaPipe face landmarks, and reasons against a per-driver baseline stored in persistent SQLite memory. When fatigue is detected, it triggers graduated interventions — in-cab audio/visual alerts, nearby rest-stop recommendations, and push notifications to the driver's phone — all without sending any data to employers.
 
 **See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design, interface
 contracts, module ownership, and build conventions before touching any code.**
@@ -14,10 +10,14 @@ contracts, module ownership, and build conventions before touching any code.**
 ```bash
 cp .env.example .env          # fill in API keys
 pip install -r requirements.txt
-python -m agent.orchestrator  # starts the agent loop
+python -m demo.seed_db        # seed driver baseline
+python main.py                # start the agent loop
 ```
 
+Open `http://localhost:8080` for the live monitoring dashboard.
+
 ## Team
-- Emilio — Vision pipeline + Config
-- Kevin — Agent orchestration + Reasoning (Nemotron)
-- Josh — Memory + Interventions + Integrations + Deployment
+- **Caleb** — Contributed to system architecture design, vision pipeline, MediaPipe face landmark model, feature extraction (yawning, blinking, gaze), Brev deployment, system optimization, UI layout
+- **Kevin** — Safety Reasoning Agent (Nemotron-Super, ReAct loop, tool calling, chain-of-thought), persistent SQLite driver baseline and shift memory, SSE intervention events wired to the live frontend dashboard with Leaflet.js rest stop map
+- **Emilio** — Contributed to system architecture design, Companion Agent (Nemotron + edge-TTS/AriaNeural), orchestration pipeline, per-severity cooldown system, color-coded push notifications (ntfy), safety agent tuning
+- **Josh** — Frontend monitoring dashboard, helped shape the original concept
